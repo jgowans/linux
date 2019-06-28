@@ -857,6 +857,44 @@ static int virtio_balloon_register_shrinker(struct virtio_balloon *vb)
 	return register_shrinker(&vb->shrinker);
 }
 
+static ssize_t show_target_balloon_pages(struct device *dev, struct device_attribute *attr, char *buf) {
+	u32 target;
+	struct virtio_device *vdev = dev_to_virtio(dev);
+	struct virtio_balloon *vb = vdev->priv;
+	virtio_cread(vb->vdev, struct virtio_balloon_config, num_pages, &target);
+        return sprintf(buf, "%u\n", target);
+}
+
+static ssize_t store_target_balloon_pages(struct device *dev, struct device_attribute *attr, const char *buf, size_t count) {
+	u32 target;
+	struct virtio_device *vdev = dev_to_virtio(dev);
+	struct virtio_balloon *vb = vdev->priv;
+
+        if (kstrtouint(buf, 10, &target)) {
+            printk("Shit's broken getting a target from buf; bailing.\n");
+            return count;
+        }
+
+	virtio_cwrite(vb->vdev, struct virtio_balloon_config, num_pages, &target);
+        queue_work(system_freezable_wq, &vb->update_balloon_size_work);
+
+        return count;
+}
+
+static DEVICE_ATTR(target_pages, S_IRUGO | S_IWUSR,
+        show_target_balloon_pages, store_target_balloon_pages);
+
+static struct attribute *balloon_attrs[] = {
+    &dev_attr_target_pages.attr,
+    NULL
+};
+
+
+static const struct attribute_group balloon_group = {
+    .name = "balloon",
+    .attrs = balloon_attrs
+};
+
 static int virtballoon_probe(struct virtio_device *vdev)
 {
 	struct virtio_balloon *vb;
@@ -942,6 +980,12 @@ static int virtballoon_probe(struct virtio_device *vdev)
 		if (err)
 			goto out_del_balloon_wq;
 	}
+
+        err = sysfs_create_group(&(&vdev->dev)->kobj, &balloon_group);
+        if (err) {
+            printk("Got sysfs_create_group error: %i", err);
+        }
+
 	virtio_device_ready(vdev);
 
 	if (towards_target(vb))
