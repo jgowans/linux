@@ -7,12 +7,7 @@
 #include <linux/pfn.h>
 #include <linux/scatterlist.h>
 #include <linux/module.h>
-
-
-// Each element is a pointer to the phys addr of the next level.
-// Forcing each element to be 64-bit value so hypervisor can index
-// into it. Investigate using arch-specific sizes.
-static uint64_t *bitmap_first_lvl;
+#include <linux/bug.h>
 
 static atomic_t pages_allocated = ATOMIC_INIT(0);
 module_param_named(pages_allocated, pages_allocated.counter, int, 0664);
@@ -23,6 +18,10 @@ module_param_named(dma_handles, dma_handles.counter, int, 0664);
 static atomic_t pinned_pages = ATOMIC_INIT(0);
 module_param_named(pinned_pages, pinned_pages.counter, int, 0664);
 
+// Each element is a pointer to the phys addr of the next level.
+// Forcing each element to be 64-bit value so hypervisor can index
+// into it. Investigate using arch-specific sizes.
+static uint64_t *bitmap_first_lvl;
 /*
  * This is a pointer to a one page.
  * The page is an array of pointer to other pages.
@@ -70,9 +69,18 @@ module_param_named(pinned_pages, pinned_pages.counter, int, 0664);
 #define FIRST_LVL_OFFSET (SECOND_LVL_OFFSET + SECOND_LVL_BITS)
 #define MAX_PFN_BITS (FIRST_LVL_OFFSET + FIRST_LVL_BITS)
 
+// De-allocation hasn't been implemented, but we *could* use the last
+// bits of the second level pointer array as a count of non-zero refs
+// and when it drops to zero de-allocate the leaf pages. That has the
+// down side where we could be bouncing between allocating and freeing
+// a leaf as buffers are allocated and freed. IMO it's better to
+// accumulate leaves over time. The overhead is small(ish) and can be
+// even smaller if we track at huge page granularity.
 static void *account_get_page(void) {
-	atomic_inc(&pages_allocated);
-	return (void *)get_zeroed_page(GFP_KERNEL);
+	void *ptr = (void *)get_zeroed_page(GFP_KERNEL); // other GFP flgs? Why does this return ulong?
+	if (ptr)
+		atomic_inc(&pages_allocated);
+	return ptr;
 }
 
 // TODO: global spin lock for mutations. Mutations should be rare.
@@ -82,6 +90,7 @@ static void *refcounter_page(unsigned long pfn) {
 	unsigned int first_lvl_idx, second_lvl_idx;
 	uint64_t second_lvl_phys, leaf_phys; // use phys_addr_t?
 	uint64_t *second_lvl;
+	void *scratch;
 	pfn_valid(pfn);
 	BUG_ON(pfn >= (1UL << MAX_PFN_BITS));
 
@@ -94,7 +103,10 @@ static void *refcounter_page(unsigned long pfn) {
 	second_lvl_phys = bitmap_first_lvl[first_lvl_idx];
 	if (!second_lvl_phys) {
 		printk("allocating a second level page\n");
-		second_lvl_phys = virt_to_phys(account_get_page()); // may be mis-match on 32-bit.
+		scratch = account_get_page();
+		if (!scratch)
+			return NULL;
+		second_lvl_phys = virt_to_phys(scratch); // may be mis-match on 32-bit.
 		bitmap_first_lvl[first_lvl_idx] = second_lvl_phys;
 	}
 	second_lvl = (uint64_t *)phys_to_virt(second_lvl_phys);
@@ -103,6 +115,9 @@ static void *refcounter_page(unsigned long pfn) {
 		printk("allocating a leaf page\n");
 		// lock
 		// re-check
+		scratch = account_get_page();
+		if (!scratch)
+			return NULL;
 		leaf_phys = virt_to_phys(account_get_page());
 		second_lvl[second_lvl_idx] = leaf_phys;
 		// unlock
@@ -110,153 +125,161 @@ static void *refcounter_page(unsigned long pfn) {
 	return phys_to_virt(leaf_phys);
 }
 
-static void mark_pfns_in_use(unsigned long pfn, int n) {
-	int counter_idx;
+// Return the number of pfns marked in use. Hopefully this will be n
+// but it can be lower if we failed due to counter limitations or OOM
+// when allocating a counter page.
+static int mark_pfns_in_use(unsigned long pfn, int n) { // TODO: make this start_pfn and increment a variable.
+	unsigned long done = 0;
 	unsigned char *addr; // hard-coding to 8-bit here. This would need to be fancier.
-	unsigned char old, new;
-	//printk("making in use: 0x%lx\n", pfn);
-	//printk("n: %i\n", n);
-	//dump_stack();
-	// It may seem inefficient to do this one. bit. at. a. time.
-	// But actually we typically only have a single bit.
-	while(n) { 
-		//atomic_inc_and_test(&val);
-		//cmpxchg
-		counter_idx = pfn & ((1 << LEAF_PAGE_BITS) - 1);
-		addr = refcounter_page(pfn) + counter_idx;
-		//printk("bit idx: 0x%x\n", bit_idx);
-		//old_val = test_and_set_bit(bit_idx, bitmap_page(pfn));
+	unsigned char old;
+	while(done < n) { 
+		addr = refcounter_page(pfn + done);
+		if (!addr) // OOM.
+			break;
+		addr += ((pfn + done) & ((1 << LEAF_PAGE_BITS) - 1));
 		do {
 			old = *addr;
-			BUG_ON(old > 127);
-			new = old + 1;
-		} while (cmpxchg(addr, old, new) != old);
+		} while (old < 127 && cmpxchg(addr, old, old + 1) != old);
+		if (old >= 127) {
+			WARN(1, "Too many references to a single pfn: 0x%lx\n", pfn + done);
+			break; // bail. Don't do more work so we can rollback existing work.
+		}
 		atomic_inc(&dma_handles);
-		if (new == 1)
+		if (old == 0)
 			atomic_inc(&pinned_pages);
-		n--; pfn++;
+		done++;
 	}
+	return done;
 
 }
 
-static void mark_pfns_free(uint64_t pfn, int n) {
-	int counter_idx;
+static void mark_pfns_free(unsigned long pfn, int n) {
 	unsigned char *addr; // hard-coding to 8-bit here. This would need to be fancier.
-	unsigned char old, new;
-	//printk("marking free: 0x%lx\n", pfn);
-	//printk("n: %i\n", n);
-	//dump_stack();
-	// It may seem inefficient to do this one. bit. at. a. time.
-	// But actually we typically only have a single bit.
-	while(n) { 
-		//atomic_inc_and_test(&val);
-		//cmpxchg
-		counter_idx = pfn & ((1 << LEAF_PAGE_BITS) - 1);
-		addr = refcounter_page(pfn) + counter_idx;
-		//printk("bit idx: 0x%x\n", bit_idx);
-		//old_val = test_and_set_bit(bit_idx, bitmap_page(pfn));
+	unsigned char old;
+	int done = 0;
+	while(done < n) { 
+		addr = refcounter_page(pfn + done);
+		if (!addr) {
+			WARN(1, "Asked to free a PFN that was never allocated\n");
+			continue; // bail rather?
+		}
+		addr += (pfn + done) & ((1 << LEAF_PAGE_BITS) - 1);
 		do {
 			old = *addr;
-			BUG_ON(old < 1);
-			new = old - 1;
-		} while (cmpxchg(addr, old, new) != old);
-		atomic_dec(&dma_handles);
-		if (new == 0)
-			atomic_dec(&pinned_pages);
-		n--; pfn++;
+		} while (old > 0 && cmpxchg(addr, old, old - 1) != old);
+		if (unlikely(old == 0)) {
+			WARN(1, "Reference counter for 0x%lx already zero\n", pfn); // BUG()?
+		} else {
+			atomic_dec(&dma_handles);
+			if (old == 1)
+				atomic_dec(&pinned_pages);
+		}
+		done++; // Optimize re-use of leaf page if only leaf bits changed.
 	}
 }
-
-#if 0
-static void mark_lots_of_pfns_free(uint64_t pfn, int n) {
-	while(n) { // loops for each bitmap page
-		page_ptr = page_for_pfn(pfn);
-		start_idx = pfn & ((1 << LEAF_PAGE_BITS) - 1);
-		end_idx = min(n, (1 << LEAF_PAGE_BITS));
-		bits_to_process = end_idx - start_idx;
-		set_bits(page_ptr, start_idx, bits_to_process);
-		pfn += bits_to_process;
-		n -= bits_to_process;
-	}
-}
-#endif
 
 static void *jg_alloc(struct device *dev, size_t size,
 			dma_addr_t *dma_handle, gfp_t gfp,
 			unsigned long attrs) {
-	void *kaddr;
-	//printk("jgowans in alloc with size 0x%lx\n", size);
-	// It's a bit tricky to follow with all of the CONFIG_ switches here and
-	// in the called functions, but I *think* that the amount of data which is
-	// actually allocated is always aligned to a page. So there is no possibility
-	// that the first invocation will alloc the first half of a page, and the
-	// second invocation will alloc the second half. This means that we should 
-	// never get two pointers which map to the same PFN returned. Hence it's a
-	// BUG if a PFN which is already marked for DMA is marked again.
-	kaddr = dma_direct_alloc(dev, size, dma_handle, gfp, attrs);
-	printk("Doing vmalloc_to_pfn for %px\n", kaddr);
-	mark_pfns_in_use(PHYS_PFN(virt_to_phys(kaddr)), 1);
+	int marked = 0;
+	int n_pages = PFN_UP(size); // best way to round up to the number of pages?
+	void *kaddr = dma_direct_alloc(dev, size, dma_handle, gfp, attrs);
+	BUG_ON(virt_to_phys(kaddr) != dma_to_phys(dev, *dma_handle)); // just checking how this works...
+	if (!kaddr)
+		return NULL;
+	marked = mark_pfns_in_use(PHYS_PFN(virt_to_phys(kaddr)), n_pages);
+	if (marked != n_pages) {
+		dma_direct_free(dev, size, kaddr, *dma_handle, attrs);
+		mark_pfns_free(PHYS_PFN(virt_to_phys(kaddr)), marked);
+		return NULL;
+	}
+	printk("jgalloc returning: 0x%px for size 0x%lx\n", kaddr, size);
+	BUG_ON((unsigned long)kaddr & ~PAGE_MASK); // not sure if this is possible?
 	return kaddr;
 }
 
 static void jg_free(struct device *dev, size_t size,
 		      void *vaddr, dma_addr_t dma_handle,
 		      unsigned long attrs) {
-	printk("jgowans in free with size 0x%lx\n", size);
+	//printk("jgowans in free with size 0x%lx\n", size);
 	//uint32_t pages = 1 << get_order(size);
+	unsigned long start_pfn, offset; //, end_pfn_excl;
+	BUG_ON(dma_to_phys(dev, dma_handle) != virt_to_phys(vaddr));
+	BUG_ON((unsigned long)vaddr & ~PAGE_MASK); // not sure if this is possible?
 	dma_direct_free(dev, size, vaddr, dma_handle, attrs);
-}
-static int jg_mmap(struct device *dev, struct vm_area_struct *vma,
-		  void *cpu_addr, dma_addr_t dma_addr, size_t size,
-		  unsigned long attrs) {
-	printk("jgowans in mmap\n");
-	mark_pfns_free(PHYS_PFN(virt_to_phys(cpu_addr)), 1);
-	return 0;
+	mark_pfns_free(PHYS_PFN(virt_to_phys(vaddr)), PFN_UP(size));
 }
 
 static dma_addr_t jg_map_page(struct device *dev, struct page *page,
 		       unsigned long offset, size_t size,
 		       enum dma_data_direction dir,
 		       unsigned long attrs) {
-	int start_pfn_offset, end_pfn_offset_excl;
-	//printk("jgowans in map_page offset 0x%lx size 0x%lx\n", offset, size);
-	start_pfn_offset = PFN_DOWN(offset);
-	end_pfn_offset_excl = PFN_UP(offset + size);
-	//printk("start_pfn_offset: 0x%lx end_pfn_offset 0x%lx\n",
-	//		start_pfn_offset, end_pfn_offset_excl);
-	mark_pfns_in_use(
-			page_to_pfn(page) + start_pfn_offset,
-			end_pfn_offset_excl - start_pfn_offset);
-	return dma_direct_map_page(dev, page, offset, size, dir, attrs);
+	unsigned long start_pfn, n_pfns;
+	int marked;
+	dma_addr_t dma_addr = 0;
+	start_pfn = page_to_pfn(page) + PFN_DOWN(offset);
+	n_pfns = PFN_UP(offset + size) - PFN_DOWN(offset);
+	marked = mark_pfns_in_use(start_pfn, n_pfns);
+	if (unlikely(marked != n_pfns))
+		goto rollback;
+	dma_addr = dma_direct_map_page(dev, page, offset, size, dir, attrs);
+	if (unlikely(dma_addr == DMA_MAPPING_ERROR))
+		goto rollback;
+	return dma_addr;
+
+rollback:
+	mark_pfns_free(start_pfn, marked);
+	return DMA_MAPPING_ERROR;  // TODO: check what callers do with this...
+
 }
 static void jg_unmap_page(struct device *dev, dma_addr_t dma_handle,
 		   size_t size, enum dma_data_direction dir,
 		   unsigned long attrs) {
-	unsigned long start_pfn, end_pfn_excl;
-	start_pfn = PFN_DOWN(dma_handle);
-	end_pfn_excl = PFN_UP(dma_handle + size);
-	//printk("jgowans in unmap_page handle 0x%lx size 0x%lx\n", dma_handle, size);
-	//printk("start_pfn: 0x%lx end_pfn: 0x%lx\n", start_pfn, end_pfn_excl);
-	mark_pfns_free(start_pfn, end_pfn_excl - start_pfn);
+	unsigned long start_pfn, n_pfns;
+	phys_addr_t phys = dma_to_phys(dev, dma_handle);
+	start_pfn = PFN_DOWN(phys);
+	n_pfns = PFN_UP(phys + size) - start_pfn;
+	mark_pfns_free(start_pfn, n_pfns);
 	return dma_direct_unmap_page(dev, dma_handle, size, dir, attrs);
 }
+
 /*
  * map_sg returns 0 on error and a value > 0 on success.
  * It should never return a value < 0.
  */
-static int jg_map_sg(struct device *dev, struct scatterlist *sg,
+static int jg_map_sg(struct device *dev, struct scatterlist *sglist,
 	      int nents, enum dma_data_direction dir,
 	      unsigned long attrs) {
-	printk("jgowans in map_sg\n");
-	return dma_direct_map_sg(dev, sg, nents, dir, attrs);
+	struct scatterlist *sg;
+	int i;
+	unsigned long start_pfn_offset, end_pfn_offset_excl;
+	for_each_sg(sglist, sg, nents, i) {
+		//printk("pfn: 0x%lx\n", page_to_pfn(sg_page(sg)));
+		start_pfn_offset = PFN_DOWN(sg->offset);
+		end_pfn_offset_excl = PFN_UP(sg->offset + sg->length);
+		mark_pfns_in_use(
+				page_to_pfn(sg_page(sg)) + start_pfn_offset,
+				end_pfn_offset_excl - start_pfn_offset);
+	}
+	return dma_direct_map_sg(dev, sglist, nents, dir, attrs);
 	//return nents;
 }
 static void jg_unmap_sg(struct device *dev,
-		 struct scatterlist *sg, int nents,
+		 struct scatterlist *sglist, int nents,
 		 enum dma_data_direction dir,
 		 unsigned long attrs) {
-	//printk("jgowans in unmap_sg\n");
-	dma_direct_unmap_sg(dev, sg, nents, dir, attrs);
+	struct scatterlist *sg;
+	int i;
+	unsigned long start_pfn_offset, end_pfn_offset_excl;
+	for_each_sg(sglist, sg, nents, i) {
+		//printk("pfn: 0x%lx\n", page_to_pfn(sg_page(sg)));
+		start_pfn_offset = PFN_DOWN(sg->offset);
+		end_pfn_offset_excl = PFN_UP(sg->offset + sg->length);
+		mark_pfns_free(
+				page_to_pfn(sg_page(sg)) + start_pfn_offset,
+				end_pfn_offset_excl - start_pfn_offset);
+	}
+	dma_direct_unmap_sg(dev, sglist, nents, dir, attrs);
 }
 
 const struct dma_map_ops jg_dma_ops = {
