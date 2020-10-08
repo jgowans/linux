@@ -17,6 +17,7 @@
 #include <linux/dmem.h>
 #include <linux/debugfs.h>
 #include <linux/notifier.h>
+#include <linux/vmalloc.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/dmem.h>
@@ -361,9 +362,38 @@ static int __init dmem_node_init(struct dmem_node *dnode)
 	return 0;
 }
 
+static unsigned long *dmem_bitmap_alloc(unsigned long pages,
+					unsigned long *static_bitmap)
+{
+	unsigned long *bitmap, size;
+
+	size = BITS_TO_LONGS(pages) * sizeof(long);
+	if (size <= sizeof(*static_bitmap))
+		bitmap = static_bitmap;
+	else if (size <= PAGE_SIZE)
+		bitmap = kzalloc(size, GFP_KERNEL);
+	else
+		bitmap = vzalloc(size);
+
+	return bitmap;
+}
+
+static void dmem_bitmap_free(unsigned long pages,
+			     unsigned long *bitmap,
+			     unsigned long *static_bitmap)
+{
+	unsigned long size;
+
+	size = BITS_TO_LONGS(pages) * sizeof(long);
+	if (size > PAGE_SIZE)
+		vfree(bitmap);
+	else if (bitmap != static_bitmap)
+		kfree(bitmap);
+}
+
 static void __init dmem_region_uinit(struct dmem_region *dregion)
 {
-	unsigned long nr_pages, size, *bitmap = dregion->error_bitmap;
+	unsigned long nr_pages, *bitmap = dregion->error_bitmap;
 
 	if (!bitmap)
 		return;
@@ -373,9 +403,7 @@ static void __init dmem_region_uinit(struct dmem_region *dregion)
 
 	WARN_ON(!nr_pages);
 
-	size = BITS_TO_LONGS(nr_pages) * sizeof(long);
-	if (size > sizeof(dregion->static_bitmap))
-		kfree(bitmap);
+	dmem_bitmap_free(nr_pages, bitmap, &dregion->static_error_bitmap);
 	dregion->error_bitmap = NULL;
 }
 
@@ -404,19 +432,15 @@ static void __init dmem_uinit(void)
 
 static int __init dmem_region_init(struct dmem_region *dregion)
 {
-	unsigned long *bitmap, size, nr_pages;
+	unsigned long *bitmap, nr_pages;
 
 	nr_pages = __phys_to_pfn(dregion->reserved_end_addr)
 		- __phys_to_pfn(dregion->reserved_start_addr);
 
-	size = BITS_TO_LONGS(nr_pages) * sizeof(long);
-	if (size <= sizeof(dregion->static_error_bitmap)) {
-		bitmap = &dregion->static_error_bitmap;
-	} else {
-		bitmap = kzalloc(size, GFP_KERNEL);
-		if (!bitmap)
-			return -ENOMEM;
-	}
+	bitmap = dmem_bitmap_alloc(nr_pages, &dregion->static_error_bitmap);
+	if (!bitmap)
+		return -ENOMEM;
+
 	dregion->error_bitmap = bitmap;
 	return 0;
 }
@@ -471,7 +495,7 @@ late_initcall(dmem_late_init);
 static int dmem_alloc_region_init(struct dmem_region *dregion,
 				  unsigned long *dpages)
 {
-	unsigned long start, end, *bitmap, size;
+	unsigned long start, end, *bitmap;
 
 	start = DMEM_PAGE_UP(dregion->reserved_start_addr);
 	end = DMEM_PAGE_DOWN(dregion->reserved_end_addr);
@@ -480,14 +504,9 @@ static int dmem_alloc_region_init(struct dmem_region *dregion,
 	if (!*dpages)
 		return 0;
 
-	size = BITS_TO_LONGS(*dpages) * sizeof(long);
-	if (size <= sizeof(dregion->static_bitmap))
-		bitmap = &dregion->static_bitmap;
-	else {
-		bitmap = kzalloc(size, GFP_KERNEL);
-		if (!bitmap)
-			return -ENOMEM;
-	}
+	bitmap = dmem_bitmap_alloc(*dpages, &dregion->static_bitmap);
+	if (!bitmap)
+		return -ENOMEM;
 
 	dregion->bitmap = bitmap;
 	dregion->next_free_pos = 0;
@@ -581,7 +600,7 @@ static void dmem_uinit_check_alloc_bitmap(struct dmem_region *dregion)
 
 static void dmem_alloc_region_uinit(struct dmem_region *dregion)
 {
-	unsigned long dpages, size, *bitmap = dregion->bitmap;
+	unsigned long dpages, *bitmap = dregion->bitmap;
 
 	if (!bitmap)
 		return;
@@ -591,9 +610,7 @@ static void dmem_alloc_region_uinit(struct dmem_region *dregion)
 
 	dmem_uinit_check_alloc_bitmap(dregion);
 
-	size = BITS_TO_LONGS(dpages) * sizeof(long);
-	if (size > sizeof(dregion->static_bitmap))
-		kfree(bitmap);
+	dmem_bitmap_free(dpages, bitmap, &dregion->static_bitmap);
 	dregion->bitmap = NULL;
 }
 
