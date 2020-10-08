@@ -243,7 +243,7 @@ static inline spinlock_t *pmd_trans_huge_lock(pmd_t *pmd,
 static inline spinlock_t *pud_trans_huge_lock(pud_t *pud,
 		struct vm_area_struct *vma)
 {
-	if (pud_trans_huge(*pud) || pud_devmap(*pud))
+	if (pud_trans_huge(*pud) || pud_devmap(*pud) || pud_special(*pud))
 		return __pud_trans_huge_lock(pud, vma);
 	else
 		return NULL;

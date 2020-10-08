@@ -388,6 +388,42 @@ follow_special_pmd(struct vm_area_struct *vma, unsigned long address,
 	return ERR_PTR(-EEXIST);
 }
 
+static struct page *
+follow_special_pud(struct vm_area_struct *vma, unsigned long address,
+		   pud_t *pud, unsigned int flags)
+{
+	spinlock_t *ptl;
+
+	if (flags & FOLL_DUMP)
+		/* Avoid special (like zero) pages in core dumps */
+		return ERR_PTR(-EFAULT);
+
+	/* No page to get reference */
+	if (flags & FOLL_GET)
+		return ERR_PTR(-EFAULT);
+
+	if (flags & FOLL_TOUCH) {
+		pud_t _pud;
+
+		ptl = pud_lock(vma->vm_mm, pud);
+		if (!pud_special(*pud)) {
+			spin_unlock(ptl);
+			return NULL;
+		}
+		_pud = pud_mkyoung(*pud);
+		if (flags & FOLL_WRITE)
+			_pud = pud_mkdirty(_pud);
+		if (pudp_set_access_flags(vma, address & HPAGE_PMD_MASK,
+					  pud, _pud,
+					  flags & FOLL_WRITE))
+			update_mmu_cache_pud(vma, address, pud);
+		spin_unlock(ptl);
+	}
+
+	/* Proper page table entry exists, but no corresponding struct page */
+	return ERR_PTR(-EEXIST);
+}
+
 /*
  * FOLL_FORCE can write to even unwritable pte's, but only
  * after we've gone through a COW cycle and they are dirty.
@@ -684,6 +720,12 @@ static struct page *follow_pud_mask(struct vm_area_struct *vma,
 		return no_page_table(vma, flags);
 	if (pud_huge(*pud) && is_vm_hugetlb_page(vma)) {
 		page = follow_huge_pud(mm, address, pud, flags);
+		if (page)
+			return page;
+		return no_page_table(vma, flags);
+	}
+	if (pud_special(*pud)) {
+		page = follow_special_pud(vma, address, pud, flags);
 		if (page)
 			return page;
 		return no_page_table(vma, flags);
@@ -2346,6 +2388,10 @@ static int gup_huge_pud(pud_t orig, pud_t *pudp, unsigned long addr,
 	int refs;
 
 	if (!pud_access_permitted(orig, flags & FOLL_WRITE))
+		return 0;
+
+	/* Bypass dmem pud. It will be handled in outside routine. */
+	if (pud_special(orig))
 		return 0;
 
 	if (pud_devmap(orig)) {
