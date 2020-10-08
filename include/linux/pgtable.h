@@ -1208,6 +1208,13 @@ static inline int pud_trans_unstable(pud_t *pud)
 #endif
 }
 
+#ifndef CONFIG_ARCH_HAS_PTE_DMEM
+static inline pmd_t pmd_mkdmem(pmd_t pmd)
+{
+	return pmd;
+}
+#endif
+
 #ifndef pmd_read_atomic
 static inline pmd_t pmd_read_atomic(pmd_t *pmdp)
 {
