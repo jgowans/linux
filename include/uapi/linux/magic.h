@@ -97,5 +97,6 @@
 #define DEVMEM_MAGIC		0x454d444d	/* "DMEM" */
 #define Z3FOLD_MAGIC		0x33
 #define PPC_CMM_MAGIC		0xc7571590
+#define DMEMFS_MAGIC		0x2ace90c6
 
 #endif /* __LINUX_MAGIC_H__ */
