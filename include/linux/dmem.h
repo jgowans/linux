@@ -23,6 +23,13 @@ bool is_dmem_pfn(unsigned long pfn);
 #define dmem_free_page(addr)	dmem_free_pages(addr, 1)
 
 bool dmem_memory_failure(unsigned long pfn, int flags);
+
+struct dmem_mce_notifier_info {
+	int flags;
+};
+
+int dmem_register_mce_notifier(struct notifier_block *nb);
+int dmem_unregister_mce_notifier(struct notifier_block *nb);
 #else
 static inline int dmem_reserve_init(void)
 {

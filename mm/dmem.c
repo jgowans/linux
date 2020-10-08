@@ -70,6 +70,7 @@ struct dmem_node {
 
 struct dmem_pool {
 	struct mutex lock;
+	struct raw_notifier_head mce_notifier_chain;
 
 	unsigned long region_num;
 	unsigned long registered_pages;
@@ -92,6 +93,7 @@ struct dmem_pool {
 
 static struct dmem_pool dmem_pool = {
 	.lock = __MUTEX_INITIALIZER(dmem_pool.lock),
+	.mce_notifier_chain = RAW_NOTIFIER_INIT(dmem_pool.mce_notifier_chain),
 };
 
 #define DMEM_PAGE_SIZE		(1UL << dmem_pool.dpage_shift)
@@ -120,6 +122,35 @@ static struct dmem_pool dmem_pool = {
 
 #define for_each_dmem_region(_dnode, _dregion)				\
 	list_for_each_entry(_dregion, &(_dnode)->regions, node)
+
+int dmem_register_mce_notifier(struct notifier_block *nb)
+{
+	int ret;
+
+	mutex_lock(&dmem_pool.lock);
+	ret = raw_notifier_chain_register(&dmem_pool.mce_notifier_chain, nb);
+	mutex_unlock(&dmem_pool.lock);
+	return ret;
+}
+EXPORT_SYMBOL(dmem_register_mce_notifier);
+
+int dmem_unregister_mce_notifier(struct notifier_block *nb)
+{
+	int ret;
+
+	mutex_lock(&dmem_pool.lock);
+	ret = raw_notifier_chain_unregister(&dmem_pool.mce_notifier_chain, nb);
+	mutex_unlock(&dmem_pool.lock);
+	return ret;
+}
+EXPORT_SYMBOL(dmem_unregister_mce_notifier);
+
+static int dmem_mce_notify(unsigned long pfn,
+			   struct dmem_mce_notifier_info *info)
+{
+	return raw_notifier_call_chain(&dmem_pool.mce_notifier_chain,
+				       pfn, info);
+}
 
 static inline int *dmem_nodelist(int nid)
 {
@@ -1001,6 +1032,7 @@ bool dmem_memory_failure(unsigned long pfn, int flags)
 	u64 pos;
 	phys_addr_t addr = __pfn_to_phys(pfn);
 	bool used = false;
+	struct dmem_mce_notifier_info info;
 
 	dregion = find_dmem_region(addr, &pdnode);
 	if (!dregion)
@@ -1020,6 +1052,8 @@ bool dmem_memory_failure(unsigned long pfn, int flags)
 	pos = phys_to_dpage(addr) - dregion->dpage_start_pfn;
 	if (__test_and_set_bit(pos, dregion->bitmap)) {
 		used = true;
+		info.flags = flags;
+		dmem_mce_notify(pfn, &info);
 	} else {
 		pr_info("MCE: free dpage, mark %#lx disabled in dmem\n", pfn);
 		dnode_count_free_dpages(pdnode, -1);
