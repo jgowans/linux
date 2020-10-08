@@ -522,6 +522,43 @@ static vm_fault_t  __dmemfs_pmd_fault(struct vm_fault *vmf)
 	return ret;
 }
 
+#ifdef CONFIG_HAVE_ARCH_TRANSPARENT_HUGEPAGE_PUD
+static vm_fault_t __dmemfs_huge_fault(struct vm_fault *vmf)
+{
+	struct vm_area_struct *vma = vmf->vma;
+	unsigned long pud_addr = vmf->address & PUD_MASK;
+	struct inode *inode = file_inode(vma->vm_file);
+	void *entry;
+	phys_addr_t phys;
+	pfn_t pfn;
+	int ret;
+
+	if (dmem_page_size(inode) < PUD_SIZE)
+		return VM_FAULT_FALLBACK;
+
+	WARN_ON(pud_addr < vma->vm_start ||
+		vma->vm_end < pud_addr + PUD_SIZE);
+
+	entry = radix_get_create_entry(vma, pud_addr, inode,
+				       linear_page_index(vma, pud_addr));
+	if (IS_ERR(entry))
+		return (PTR_ERR(entry) == -ENOMEM) ?
+			VM_FAULT_OOM : VM_FAULT_SIGBUS;
+
+	phys = dmem_entry_to_addr(inode, entry);
+	pfn = phys_to_pfn_t(phys, PFN_DMEM);
+	ret = vmf_insert_pfn_pud(vmf, pfn, !!(vma->vm_flags & VM_WRITE));
+
+	radix_put_entry();
+	return ret;
+}
+#else
+static vm_fault_t __dmemfs_huge_fault(struct vm_fault *vmf)
+{
+	return VM_FAULT_FALLBACK;
+}
+#endif /* !CONFIG_HAVE_ARCH_TRANSPARENT_HUGEPAGE_PUD */
+
 static vm_fault_t dmemfs_huge_fault(struct vm_fault *vmf, enum page_entry_size pe_size)
 {
 	int ret;
@@ -532,6 +569,9 @@ static vm_fault_t dmemfs_huge_fault(struct vm_fault *vmf, enum page_entry_size p
 		break;
 	case PE_SIZE_PMD:
 		ret = __dmemfs_pmd_fault(vmf);
+		break;
+	case PE_SIZE_PUD:
+		ret = __dmemfs_huge_fault(vmf);
 		break;
 	default:
 		ret = VM_FAULT_SIGBUS;
