@@ -453,6 +453,13 @@ dmemfs_access_dmem(struct vm_area_struct *vma, unsigned long addr,
 	return len;
 }
 
+static int dmemfs_split(struct vm_area_struct *vma, unsigned long addr)
+{
+	if (addr & (dmem_page_size(file_inode(vma->vm_file)) - 1))
+		return -EINVAL;
+	return 0;
+}
+
 static vm_fault_t dmemfs_fault(struct vm_fault *vmf)
 {
 	struct vm_area_struct *vma = vmf->vma;
@@ -487,6 +494,7 @@ static unsigned long dmemfs_pagesize(struct vm_area_struct *vma)
 }
 
 static const struct vm_operations_struct dmemfs_vm_ops = {
+	.may_split = dmemfs_split,
 	.fault = dmemfs_fault,
 	.pagesize = dmemfs_pagesize,
 	.access = dmemfs_access_dmem,
