@@ -16,6 +16,7 @@
 #include "spte.h"
 
 #include <asm/e820/api.h>
+#include <linux/dmem.h>
 
 u64 __read_mostly shadow_nx_mask;
 u64 __read_mostly shadow_x_mask; /* mutual exclusive with nx_mask */
@@ -76,9 +77,9 @@ static bool kvm_is_mmio_pfn(kvm_pfn_t pfn)
 			 */
 			(!pat_enabled() || pat_pfn_immune_to_uc_mtrr(pfn));
 
-	return !e820__mapped_raw_any(pfn_to_hpa(pfn),
+	return (!e820__mapped_raw_any(pfn_to_hpa(pfn),
 				     pfn_to_hpa(pfn + 1) - 1,
-				     E820_TYPE_RAM);
+				     E820_TYPE_RAM)) || (!is_dmem_pfn(pfn));
 }
 
 int make_spte(struct kvm_vcpu *vcpu, unsigned int pte_access, int level,
