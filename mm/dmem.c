@@ -430,6 +430,41 @@ static void __init dmem_uinit(void)
 	dmem_pool.registered_pages = 0;
 }
 
+/* set or clear corresponding bit on allocation bitmap based on error bitmap */
+static unsigned long dregion_alloc_bitmap_set_clear(struct dmem_region *dregion,
+						    bool set)
+{
+	unsigned long pos_pfn, pos_offset;
+	unsigned long valid_pages, mce_dpages = 0;
+	phys_addr_t dpage, reserved_start_pfn;
+
+	reserved_start_pfn = __phys_to_pfn(dregion->reserved_start_addr);
+
+	valid_pages = dpage_to_pfn(dregion->dpage_end_pfn) - reserved_start_pfn;
+	pos_offset = dpage_to_pfn(dregion->dpage_start_pfn)
+		- reserved_start_pfn;
+try_set:
+	pos_pfn = find_next_bit(dregion->error_bitmap, valid_pages, pos_offset);
+
+	if (pos_pfn >= valid_pages)
+		return mce_dpages;
+	mce_dpages++;
+	dpage = pfn_to_dpage(pos_pfn + reserved_start_pfn);
+	if (set)
+		WARN_ON(__test_and_set_bit(dpage - dregion->dpage_start_pfn,
+					   dregion->bitmap));
+	else
+		WARN_ON(!__test_and_clear_bit(dpage - dregion->dpage_start_pfn,
+					      dregion->bitmap));
+	pos_offset = dpage_to_pfn(dpage + 1) - reserved_start_pfn;
+	goto try_set;
+}
+
+static unsigned long dmem_region_mark_mce_dpages(struct dmem_region *dregion)
+{
+	return dregion_alloc_bitmap_set_clear(dregion, true);
+}
+
 static int __init dmem_region_init(struct dmem_region *dregion)
 {
 	unsigned long *bitmap, nr_pages;
@@ -513,6 +548,8 @@ static int dmem_alloc_region_init(struct dmem_region *dregion,
 	dregion->dpage_start_pfn = start;
 	dregion->dpage_end_pfn = end;
 
+	*dpages -= dmem_region_mark_mce_dpages(dregion);
+
 	dmem_pool.unaligned_pages += __phys_to_pfn((dpage_to_phys(start)
 		- dregion->reserved_start_addr));
 	dmem_pool.unaligned_pages += __phys_to_pfn(dregion->reserved_end_addr
@@ -555,36 +592,6 @@ dmem_alloc_bitmap_clear(struct dmem_region *dregion, phys_addr_t dpage,
 		}
 	}
 	return err_num;
-}
-
-/* set or clear corresponding bit on allocation bitmap based on error bitmap */
-static unsigned long dregion_alloc_bitmap_set_clear(struct dmem_region *dregion,
-						    bool set)
-{
-	unsigned long pos_pfn, pos_offset;
-	unsigned long valid_pages, mce_dpages = 0;
-	phys_addr_t dpage, reserved_start_pfn;
-
-	reserved_start_pfn = __phys_to_pfn(dregion->reserved_start_addr);
-
-	valid_pages = dpage_to_pfn(dregion->dpage_end_pfn) - reserved_start_pfn;
-	pos_offset = dpage_to_pfn(dregion->dpage_start_pfn)
-		- reserved_start_pfn;
-try_set:
-	pos_pfn = find_next_bit(dregion->error_bitmap, valid_pages, pos_offset);
-
-	if (pos_pfn >= valid_pages)
-		return mce_dpages;
-	mce_dpages++;
-	dpage = pfn_to_dpage(pos_pfn + reserved_start_pfn);
-	if (set)
-		WARN_ON(__test_and_set_bit(dpage - dregion->dpage_start_pfn,
-					   dregion->bitmap));
-	else
-		WARN_ON(!__test_and_clear_bit(dpage - dregion->dpage_start_pfn,
-					      dregion->bitmap));
-	pos_offset = dpage_to_pfn(dpage + 1) - reserved_start_pfn;
-	goto try_set;
 }
 
 static void dmem_uinit_check_alloc_bitmap(struct dmem_region *dregion)
@@ -987,6 +994,42 @@ void dmem_free_pages(phys_addr_t addr, unsigned int dpages_nr)
 	mutex_unlock(&dmem_pool.lock);
 }
 EXPORT_SYMBOL(dmem_free_pages);
+bool dmem_memory_failure(unsigned long pfn, int flags)
+{
+	struct dmem_region *dregion;
+	struct dmem_node *pdnode = NULL;
+	u64 pos;
+	phys_addr_t addr = __pfn_to_phys(pfn);
+	bool used = false;
+
+	dregion = find_dmem_region(addr, &pdnode);
+	if (!dregion)
+		return false;
+
+	WARN_ON(!pdnode || !dregion->error_bitmap);
+
+	mutex_lock(&dmem_pool.lock);
+	pos = pfn - __phys_to_pfn(dregion->reserved_start_addr);
+	if (__test_and_set_bit(pos, dregion->error_bitmap))
+		goto out;
+
+	if (!dregion->bitmap || pfn < dpage_to_pfn(dregion->dpage_start_pfn) ||
+	    pfn >= dpage_to_pfn(dregion->dpage_end_pfn))
+		goto out;
+
+	pos = phys_to_dpage(addr) - dregion->dpage_start_pfn;
+	if (__test_and_set_bit(pos, dregion->bitmap)) {
+		used = true;
+	} else {
+		pr_info("MCE: free dpage, mark %#lx disabled in dmem\n", pfn);
+		dnode_count_free_dpages(pdnode, -1);
+	}
+out:
+	trace_dmem_memory_failure(pfn, used);
+	mutex_unlock(&dmem_pool.lock);
+	return true;
+}
+
 bool is_dmem_pfn(unsigned long pfn)
 {
 	struct dmem_node *dnode;

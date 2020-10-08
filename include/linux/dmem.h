@@ -21,6 +21,8 @@ dmem_alloc_pages_vma(struct vm_area_struct *vma, unsigned long addr,
 void dmem_free_pages(phys_addr_t addr, unsigned int dpages_nr);
 bool is_dmem_pfn(unsigned long pfn);
 #define dmem_free_page(addr)	dmem_free_pages(addr, 1)
+
+bool dmem_memory_failure(unsigned long pfn, int flags);
 #else
 static inline int dmem_reserve_init(void)
 {
@@ -32,5 +34,9 @@ static inline bool is_dmem_pfn(unsigned long pfn)
 	return 0;
 }
 
+static inline bool dmem_memory_failure(unsigned long pfn, int flags)
+{
+	return false;
+}
 #endif
 #endif	/* _LINUX_DMEM_H */
