@@ -210,6 +210,12 @@ out:
 }
 EXPORT_SYMBOL(inode_init_always);
 
+struct inode *alloc_inode_nonrcu(void)
+{
+	return kmem_cache_alloc(inode_cachep, GFP_KERNEL);
+}
+EXPORT_SYMBOL(alloc_inode_nonrcu);
+
 void free_inode_nonrcu(struct inode *inode)
 {
 	kmem_cache_free(inode_cachep, inode);
