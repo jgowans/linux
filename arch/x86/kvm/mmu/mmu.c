@@ -40,6 +40,7 @@
 #include <linux/hash.h>
 #include <linux/kern_levels.h>
 #include <linux/kthread.h>
+#include <linux/dmem.h>
 
 #include <asm/page.h>
 #include <asm/memtype.h>
@@ -2978,9 +2979,9 @@ static bool kvm_is_mmio_pfn(kvm_pfn_t pfn)
 			 */
 			(!pat_enabled() || pat_pfn_immune_to_uc_mtrr(pfn));
 
-	return !e820__mapped_raw_any(pfn_to_hpa(pfn),
+	return (!e820__mapped_raw_any(pfn_to_hpa(pfn),
 				     pfn_to_hpa(pfn + 1) - 1,
-				     E820_TYPE_RAM);
+				     E820_TYPE_RAM)) || (!is_dmem_pfn(pfn));
 }
 
 /* Bits which may be returned by set_spte() */
