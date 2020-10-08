@@ -4483,9 +4483,9 @@ int __pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address)
 }
 #endif /* __PAGETABLE_PMD_FOLDED */
 
-static int __follow_pte_pmd(struct mm_struct *mm, unsigned long address,
+static int __follow_pte_pud(struct mm_struct *mm, unsigned long address,
 			    struct mmu_notifier_range *range,
-			    pte_t **ptepp, pmd_t **pmdpp, spinlock_t **ptlp)
+			    pte_t **ptepp, pmd_t **pmdpp, pud_t **pudpp, spinlock_t **ptlp)
 {
 	pgd_t *pgd;
 	p4d_t *p4d;
@@ -4502,6 +4502,26 @@ static int __follow_pte_pmd(struct mm_struct *mm, unsigned long address,
 		goto out;
 
 	pud = pud_offset(p4d, address);
+	VM_BUG_ON(pud_trans_huge(*pud));
+	if (pud_huge(*pud)) {
+		if (!pudpp)
+			goto out;
+
+		if (range) {
+			mmu_notifier_range_init(range, MMU_NOTIFY_CLEAR, 0,
+						NULL, mm, address & PUD_MASK,
+						(address & PUD_MASK) + PUD_SIZE);
+			mmu_notifier_invalidate_range_start(range);
+		}
+		*ptlp = pud_lock(mm, pud);
+		if (pud_huge(*pud)) {
+			*pudpp = pud;
+			return 0;
+		}
+		spin_unlock(*ptlp);
+		if (range)
+			mmu_notifier_invalidate_range_end(range);
+	}
 	if (pud_none(*pud) || unlikely(pud_bad(*pud)))
 		goto out;
 
@@ -4557,8 +4577,8 @@ static inline int follow_pte(struct mm_struct *mm, unsigned long address,
 
 	/* (void) is needed to make gcc happy */
 	(void) __cond_lock(*ptlp,
-			   !(res = __follow_pte_pmd(mm, address, NULL,
-						    ptepp, NULL, ptlp)));
+			   !(res = __follow_pte_pud(mm, address, NULL,
+						    ptepp, NULL, NULL, ptlp)));
 	return res;
 }
 
@@ -4570,12 +4590,24 @@ int follow_pte_pmd(struct mm_struct *mm, unsigned long address,
 
 	/* (void) is needed to make gcc happy */
 	(void) __cond_lock(*ptlp,
-			   !(res = __follow_pte_pmd(mm, address, range,
-						    ptepp, pmdpp, ptlp)));
+			   !(res = __follow_pte_pud(mm, address, range,
+						    ptepp, pmdpp, NULL, ptlp)));
 	return res;
 }
 EXPORT_SYMBOL(follow_pte_pmd);
 
+int follow_pte_pud(struct mm_struct *mm, unsigned long address,
+		   struct mmu_notifier_range *range,
+		   pte_t **ptepp, pmd_t **pmdpp, pud_t **pudpp, spinlock_t **ptlp)
+{
+	int res;
+
+	/* (void) is needed to make gcc happy */
+	(void) __cond_lock(*ptlp,
+			   !(res = __follow_pte_pud(mm, address, range,
+						    ptepp, pmdpp, pudpp, ptlp)));
+	return res;
+}
 /**
  * follow_pfn - look up PFN at a user virtual address
  * @vma: memory mapping
@@ -4593,15 +4625,19 @@ int follow_pfn(struct vm_area_struct *vma, unsigned long address,
 	spinlock_t *ptl;
 	pte_t *ptep;
 	pmd_t *pmdp = NULL;
+	pud_t *pudp = NULL;
 
 	if (!(vma->vm_flags & (VM_IO | VM_PFNMAP)))
 		return ret;
 
-	ret = follow_pte_pmd(vma->vm_mm, address, NULL, &ptep, &pmdp, &ptl);
+	ret = follow_pte_pud(vma->vm_mm, address, NULL, &ptep, &pmdp, &pudp, &ptl);
 	if (ret)
 		return ret;
 
-	if (pmdp) {
+	if (pudp) {
+		*pfn = pud_pfn(*pudp) + ((address & ~PUD_MASK) >> PAGE_SHIFT);
+		spin_unlock(ptl);
+	} else if (pmdp) {
 		*pfn = pmd_pfn(*pmdp) + ((address & ~PMD_MASK) >> PAGE_SHIFT);
 		spin_unlock(ptl);
 	} else {
