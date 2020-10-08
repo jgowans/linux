@@ -62,6 +62,23 @@ TRACE_EVENT(dmem_free_pages,
 	TP_printk("addr %#lx dpages_nr %d", (unsigned long)__entry->addr,
 		  __entry->dpages_nr)
 );
+
+TRACE_EVENT(dmem_memory_failure,
+	TP_PROTO(unsigned long pfn, bool used),
+	TP_ARGS(pfn, used),
+
+	TP_STRUCT__entry(
+		__field(unsigned long, pfn)
+		__field(bool, used)
+	),
+
+	TP_fast_assign(
+		__entry->pfn = pfn;
+		__entry->used = used;
+	),
+
+	TP_printk("pfn=%#lx used=%d", __entry->pfn, __entry->used)
+);
 #endif
 
 /* This part must be outside protection */

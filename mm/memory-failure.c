@@ -35,6 +35,7 @@
  */
 #include <linux/kernel.h>
 #include <linux/mm.h>
+#include <linux/dmem.h>
 #include <linux/page-flags.h>
 #include <linux/kernel-page-flags.h>
 #include <linux/sched/signal.h>
@@ -1410,6 +1411,11 @@ int memory_failure(unsigned long pfn, int flags)
 
 	if (!sysctl_memory_failure_recovery)
 		panic("Memory failure on page %lx", pfn);
+
+	if (dmem_memory_failure(pfn, flags)) {
+		pr_info("MCE %#lx: handled by dmem\n", pfn);
+		return 0;
+	}
 
 	p = pfn_to_online_page(pfn);
 	if (!p) {
