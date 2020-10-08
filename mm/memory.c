@@ -4644,7 +4644,7 @@ int __pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address)
 
 int follow_invalidate_pte(struct mm_struct *mm, unsigned long address,
 			  struct mmu_notifier_range *range, pte_t **ptepp,
-			  pmd_t **pmdpp, spinlock_t **ptlp)
+			  pmd_t **pmdpp, pud_t **pudpp, spinlock_t **ptlp)
 {
 	pgd_t *pgd;
 	p4d_t *p4d;
@@ -4661,6 +4661,26 @@ int follow_invalidate_pte(struct mm_struct *mm, unsigned long address,
 		goto out;
 
 	pud = pud_offset(p4d, address);
+	VM_BUG_ON(pud_trans_huge(*pud));
+	if (pud_huge(*pud)) {
+		if (!pudpp)
+			goto out;
+
+		if (range) {
+			mmu_notifier_range_init(range, MMU_NOTIFY_CLEAR, 0,
+						NULL, mm, address & PUD_MASK,
+						(address & PUD_MASK) + PUD_SIZE);
+			mmu_notifier_invalidate_range_start(range);
+		}
+		*ptlp = pud_lock(mm, pud);
+		if (pud_huge(*pud)) {
+			*pudpp = pud;
+			return 0;
+		}
+		spin_unlock(*ptlp);
+		if (range)
+			mmu_notifier_invalidate_range_end(range);
+	}
 	if (pud_none(*pud) || unlikely(pud_bad(*pud)))
 		goto out;
 
@@ -4733,7 +4753,7 @@ out:
 int follow_pte(struct mm_struct *mm, unsigned long address,
 	       pte_t **ptepp, spinlock_t **ptlp)
 {
-	return follow_invalidate_pte(mm, address, NULL, ptepp, NULL, ptlp);
+	return follow_invalidate_pte(mm, address, NULL, ptepp, NULL, NULL, ptlp);
 }
 EXPORT_SYMBOL_GPL(follow_pte);
 
@@ -4757,15 +4777,19 @@ int follow_pfn(struct vm_area_struct *vma, unsigned long address,
 	spinlock_t *ptl;
 	pte_t *ptep;
 	pmd_t *pmdp = NULL;
+	pud_t *pudp = NULL;
 
 	if (!(vma->vm_flags & (VM_IO | VM_PFNMAP)))
 		return ret;
 
-	ret = follow_invalidate_pte(vma->vm_mm, address, NULL, &ptep, &pmdp, &ptl);
+	ret = follow_invalidate_pte(vma->vm_mm, address, NULL, &ptep, &pmdp, &pudp, &ptl);
 	if (ret)
 		return ret;
 
-	if (pmdp) {
+	if (pudp) {
+		*pfn = pud_pfn(*pudp) + ((address & ~PUD_MASK) >> PAGE_SHIFT);
+		spin_unlock(ptl);
+	} else if (pmdp) {
 		*pfn = pmd_pfn(*pmdp) + ((address & ~PMD_MASK) >> PAGE_SHIFT);
 		spin_unlock(ptl);
 	} else {
