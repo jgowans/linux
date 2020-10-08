@@ -2966,6 +2966,7 @@ static void kvm_vcpu_flush_tlb_guest(struct kvm_vcpu *vcpu)
 
 static void record_steal_time(struct kvm_vcpu *vcpu)
 {
+#if 0
 	struct kvm_host_map map;
 	struct kvm_steal_time *st;
 
@@ -3014,6 +3015,7 @@ static void record_steal_time(struct kvm_vcpu *vcpu)
 	st->version += 1;
 
 	kvm_unmap_gfn(vcpu, &map, &vcpu->arch.st.cache, true, false);
+#endif
 }
 
 int kvm_set_msr_common(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
