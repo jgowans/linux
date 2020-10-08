@@ -575,12 +575,19 @@ retry:
 		if (ret == -EAGAIN)
 			goto retry;
 
+		if (!ret && (prot & IOMMU_WRITE) &&
+		    !(vma->vm_flags & VM_WRITE))
+			ret = -EFAULT;
+
 		if (!ret) {
 			if (is_invalid_reserved_pfn(*pfn))
 				ret = 1;
 			else
 				ret = -EFAULT;
 		}
+
+		if (!ret && !is_invalid_reserved_pfn(*pfn))
+			ret = -EFAULT;
 	}
 done:
 	mmap_read_unlock(mm);
