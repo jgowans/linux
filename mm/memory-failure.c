@@ -335,8 +335,8 @@ static unsigned long dev_pagemap_mapping_shift(struct page *page,
  * Uses GFP_ATOMIC allocations to avoid potential recursions in the VM.
  */
 static void add_to_kill(struct task_struct *tsk, struct page *p,
-		       struct vm_area_struct *vma,
-		       struct list_head *to_kill)
+		       struct vm_area_struct *vma, unsigned long pfn,
+		       pgoff_t pgoff, struct list_head *to_kill)
 {
 	struct to_kill *tk;
 
@@ -346,12 +346,17 @@ static void add_to_kill(struct task_struct *tsk, struct page *p,
 		return;
 	}
 
-	tk->addr = page_address_in_vma(p, vma);
-	if (is_zone_device_page(p))
-		tk->size_shift = dev_pagemap_mapping_shift(p, vma);
-	else
-		tk->size_shift = page_shift(compound_head(p));
-
+	if (p) {
+		tk->addr = page_address_in_vma(p, vma);
+		if (is_zone_device_page(p))
+			tk->size_shift = dev_pagemap_mapping_shift(p, vma);
+		else
+			tk->size_shift = page_shift(compound_head(p));
+	} else {
+		tk->size_shift = PAGE_SHIFT;
+		tk->addr = vma->vm_start +
+			((pgoff - vma->vm_pgoff) << PAGE_SHIFT);
+	}
 	/*
 	 * Send SIGKILL if "tk->addr == -EFAULT". Also, as
 	 * "tk->size_shift" is always non-zero for !is_zone_device_page(),
@@ -364,7 +369,7 @@ static void add_to_kill(struct task_struct *tsk, struct page *p,
 	 */
 	if (tk->addr == -EFAULT) {
 		pr_info("Memory failure: Unable to find user space address %lx in %s\n",
-			page_to_pfn(p), tsk->comm);
+			pfn, tsk->comm);
 	} else if (tk->size_shift == 0) {
 		kfree(tk);
 		return;
@@ -497,7 +502,8 @@ static void collect_procs_anon(struct page *page, struct list_head *to_kill,
 			if (!page_mapped_in_vma(page, vma))
 				continue;
 			if (vma->vm_mm == t->mm)
-				add_to_kill(t, page, vma, to_kill);
+				add_to_kill(t, page, vma, page_to_pfn(page),
+					page_to_pgoff(page), to_kill);
 		}
 	}
 	read_unlock(&tasklist_lock);
@@ -505,15 +511,14 @@ static void collect_procs_anon(struct page *page, struct list_head *to_kill,
 }
 
 /*
- * Collect processes when the error hit a file mapped page.
+ * Collect processes when the error hit a file mapped memory.
  */
-static void collect_procs_file(struct page *page, struct list_head *to_kill,
-				int force_early)
+static void __collect_procs_file(struct address_space *mapping, pgoff_t pgoff,
+				struct page *page, unsigned long pfn,
+				struct list_head *to_kill, int force_early)
 {
 	struct vm_area_struct *vma;
 	struct task_struct *tsk;
-	struct address_space *mapping = page->mapping;
-	pgoff_t pgoff;
 
 	i_mmap_lock_read(mapping);
 	read_lock(&tasklist_lock);
@@ -533,12 +538,38 @@ static void collect_procs_file(struct page *page, struct list_head *to_kill,
 			 * to be informed of all such data corruptions.
 			 */
 			if (vma->vm_mm == t->mm)
-				add_to_kill(t, page, vma, to_kill);
+				add_to_kill(t, page, vma, pfn, pgoff, to_kill);
 		}
 	}
 	read_unlock(&tasklist_lock);
 	i_mmap_unlock_read(mapping);
 }
+
+/*
+ * Collect processes when the error hit a file mapped page.
+ */
+static void collect_procs_file(struct page *page, struct list_head *to_kill,
+				int force_early)
+{
+	struct address_space *mapping = page->mapping;
+
+	__collect_procs_file(mapping, page_to_pgoff(page), page,
+			     page_to_pfn(page), to_kill, force_early);
+}
+
+void collect_procs_and_signal_inode(struct inode *inode, pgoff_t pgoff,
+					unsigned long pfn, int flags)
+{
+	int forcekill;
+	struct address_space *mapping = &inode->i_data;
+	LIST_HEAD(tokill);
+
+	__collect_procs_file(mapping, pgoff, NULL, pfn, &tokill,
+			     flags & MF_ACTION_REQUIRED);
+	forcekill = flags & MF_MUST_KILL;
+	kill_procs(&tokill, forcekill, false, pfn, flags);
+}
+EXPORT_SYMBOL(collect_procs_and_signal_inode);
 
 /*
  * Collect the processes who have the corrupted page mapped to kill.

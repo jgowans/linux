@@ -36,6 +36,47 @@ MODULE_LICENSE("GPL v2");
 
 static uint __read_mostly max_alloc_try_dpages = 1;
 
+struct dmemfs_inode {
+	struct inode *inode;
+	struct list_head link;
+};
+
+static LIST_HEAD(dmemfs_inode_list);
+static DEFINE_SPINLOCK(dmemfs_inode_lock);
+
+static struct dmemfs_inode *
+dmemfs_create_dmemfs_inode(struct inode *inode)
+{
+	struct dmemfs_inode *dmemfs_inode;
+
+	spin_lock(&dmemfs_inode_lock);
+	dmemfs_inode = kmalloc(sizeof(struct dmemfs_inode), GFP_NOIO);
+	if (!dmemfs_inode) {
+		pr_err("DMEMFS: Out of memory while getting dmemfs inode\n");
+		goto out;
+	}
+	dmemfs_inode->inode = inode;
+	list_add_tail(&dmemfs_inode->link, &dmemfs_inode_list);
+out:
+	spin_unlock(&dmemfs_inode_lock);
+	return dmemfs_inode;
+}
+
+static void dmemfs_delete_dmemfs_inode(struct inode *inode)
+{
+	struct dmemfs_inode *i, *next;
+
+	spin_lock(&dmemfs_inode_lock);
+	list_for_each_entry_safe(i, next, &dmemfs_inode_list, link) {
+		if (i->inode == inode) {
+			list_del(&i->link);
+			kfree(i);
+			break;
+		}
+	}
+	spin_unlock(&dmemfs_inode_lock);
+}
+
 struct dmemfs_mount_opts {
 	unsigned long dpage_size;
 };
@@ -219,6 +260,13 @@ static unsigned long dmem_pgoff_to_index(struct inode *inode, pgoff_t pgoff)
 	struct super_block *sb = inode->i_sb;
 
 	return pgoff >> (sb->s_blocksize_bits - PAGE_SHIFT);
+}
+
+static pgoff_t dmem_index_to_pgoff(struct inode *inode, unsigned long index)
+{
+	struct super_block *sb = inode->i_sb;
+
+	return index << (sb->s_blocksize_bits - PAGE_SHIFT);
 }
 
 static void *dmem_addr_to_entry(struct inode *inode, phys_addr_t addr)
@@ -809,6 +857,23 @@ static void dmemfs_evict_inode(struct inode *inode)
 	clear_inode(inode);
 }
 
+static struct inode *dmemfs_alloc_inode(struct super_block *sb)
+{
+	struct inode *inode;
+
+	inode = alloc_inode_nonrcu();
+	if (inode)
+		dmemfs_create_dmemfs_inode(inode);
+	return inode;
+}
+
+static void dmemfs_destroy_inode(struct inode *inode)
+{
+	if (inode)
+		dmemfs_delete_dmemfs_inode(inode);
+	free_inode_nonrcu(inode);
+}
+
 /*
  * Display the mount options in /proc/mounts.
  */
@@ -822,9 +887,11 @@ static int dmemfs_show_options(struct seq_file *m, struct dentry *root)
 }
 
 static const struct super_operations dmemfs_ops = {
+	.alloc_inode = dmemfs_alloc_inode,
 	.statfs	= dmemfs_statfs,
 	.evict_inode = dmemfs_evict_inode,
 	.drop_inode = generic_delete_inode,
+	.destroy_inode = dmemfs_destroy_inode,
 	.show_options = dmemfs_show_options,
 };
 
@@ -904,17 +971,91 @@ static struct file_system_type dmemfs_fs_type = {
 	.kill_sb	= dmemfs_kill_sb,
 };
 
+static struct inode *
+dmemfs_find_inode_by_addr(phys_addr_t addr, pgoff_t *pgoff)
+{
+	struct dmemfs_inode *di;
+	struct inode *inode;
+	struct address_space *mapping;
+	void *entry, **slot;
+	void *mce_entry;
+
+	list_for_each_entry(di, &dmemfs_inode_list, link) {
+		inode = di->inode;
+		mapping = inode->i_mapping;
+		mce_entry = dmem_addr_to_entry(inode, addr);
+		XA_STATE(xas, &mapping->i_pages, 0);
+		rcu_read_lock();
+
+		xas_for_each(&xas, entry, ULONG_MAX) {
+			if (xas_retry(&xas, entry))
+				continue;
+
+			if (unlikely(entry != xas_reload(&xas)))
+				goto retry;
+
+			if (mce_entry != entry)
+				continue;
+			*pgoff = dmem_index_to_pgoff(inode, xas.xa_index);
+			rcu_read_unlock();
+			return inode;
+retry:
+			xas_reset(&xas);
+		}
+		rcu_read_unlock();
+	}
+	return NULL;
+}
+
+static int dmemfs_mce_handler(struct notifier_block *this, unsigned long pfn,
+			      void *v)
+{
+	struct dmem_mce_notifier_info *info =
+		(struct dmem_mce_notifier_info *)v;
+	int flags = info->flags;
+	struct inode *inode;
+	phys_addr_t mce_addr = __pfn_to_phys(pfn);
+	pgoff_t pgoff;
+
+	spin_lock(&dmemfs_inode_lock);
+	inode = dmemfs_find_inode_by_addr(mce_addr, &pgoff);
+	if (!inode || !atomic_read(&inode->i_count))
+		goto out;
+
+	collect_procs_and_signal_inode(inode, pgoff, pfn, flags);
+out:
+	spin_unlock(&dmemfs_inode_lock);
+	return 0;
+}
+
+static struct notifier_block dmemfs_mce_notifier = {
+	.notifier_call	= dmemfs_mce_handler,
+};
+
 static int __init dmemfs_init(void)
 {
 	int ret;
 
+	pr_info("dmemfs initialized\n");
 	ret = register_filesystem(&dmemfs_fs_type);
+	if (ret)
+		goto reg_fs_fail;
 
+	ret = dmem_register_mce_notifier(&dmemfs_mce_notifier);
+	if (ret)
+		goto reg_notifier_fail;
+
+	return 0;
+
+reg_notifier_fail:
+	unregister_filesystem(&dmemfs_fs_type);
+reg_fs_fail:
 	return ret;
 }
 
 static void __exit dmemfs_uninit(void)
 {
+	dmem_unregister_mce_notifier(&dmemfs_mce_notifier);
 	unregister_filesystem(&dmemfs_fs_type);
 }
 
