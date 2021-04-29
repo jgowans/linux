@@ -582,13 +582,17 @@ static int add_init_region(struct damon_ctx *c,
 {
 	struct damon_target *t;
 	struct damon_region *r, *prev;
+	unsigned long id;
 	int rc = -EINVAL;
 
 	if (ar->start >= ar->end)
 		return -EINVAL;
 
 	damon_for_each_target(t, c) {
-		if (t->id == target_id) {
+		id = t->id;
+		if (targetid_is_pid(c))
+			id = (unsigned long)pid_vnr((struct pid *)id);
+		if (id == target_id) {
 			r = damon_new_region(ar->start, ar->end);
 			if (!r)
 				return -ENOMEM;
@@ -744,7 +748,7 @@ static const struct file_operations kdamond_pid_fops = {
 	.read = dbgfs_kdamond_pid_read,
 };
 
-static int dbgfs_fill_ctx_dir(struct dentry *dir, struct damon_ctx *ctx)
+static void dbgfs_fill_ctx_dir(struct dentry *dir, struct damon_ctx *ctx)
 {
 	const char * const file_names[] = {"attrs", "record", "schemes",
 		"target_ids", "init_regions", "kdamond_pid"};
@@ -753,15 +757,8 @@ static int dbgfs_fill_ctx_dir(struct dentry *dir, struct damon_ctx *ctx)
 		&kdamond_pid_fops};
 	int i;
 
-	for (i = 0; i < ARRAY_SIZE(file_names); i++) {
-		if (!debugfs_create_file(file_names[i], 0600, dir,
-					ctx, fops[i])) {
-			pr_err("failed to create %s file\n", file_names[i]);
-			return -ENOMEM;
-		}
-	}
-
-	return 0;
+	for (i = 0; i < ARRAY_SIZE(file_names); i++)
+		debugfs_create_file(file_names[i], 0600, dir, ctx, fops[i]);
 }
 
 /*
@@ -928,7 +925,6 @@ static int dbgfs_mk_context(char *name)
 {
 	struct dentry *root, **new_dirs, *new_dir;
 	struct damon_ctx **new_ctxs, *new_ctx;
-	int err;
 
 	if (damon_nr_running_ctxs())
 		return -EBUSY;
@@ -937,15 +933,12 @@ static int dbgfs_mk_context(char *name)
 			(dbgfs_nr_ctxs + 1), GFP_KERNEL);
 	if (!new_ctxs)
 		return -ENOMEM;
+	dbgfs_ctxs = new_ctxs;
 
 	new_dirs = krealloc(dbgfs_dirs, sizeof(*dbgfs_dirs) *
 			(dbgfs_nr_ctxs + 1), GFP_KERNEL);
-	if (!new_dirs) {
-		kfree(new_ctxs);
+	if (!new_dirs)
 		return -ENOMEM;
-	}
-
-	dbgfs_ctxs = new_ctxs;
 	dbgfs_dirs = new_dirs;
 
 	root = dbgfs_dirs[0];
@@ -953,8 +946,6 @@ static int dbgfs_mk_context(char *name)
 		return -ENOENT;
 
 	new_dir = debugfs_create_dir(name, root);
-	if (IS_ERR(new_dir))
-		return PTR_ERR(new_dir);
 	dbgfs_dirs[dbgfs_nr_ctxs] = new_dir;
 
 	new_ctx = dbgfs_new_ctx();
@@ -963,14 +954,12 @@ static int dbgfs_mk_context(char *name)
 		dbgfs_dirs[dbgfs_nr_ctxs] = NULL;
 		return -ENOMEM;
 	}
+
 	dbgfs_ctxs[dbgfs_nr_ctxs] = new_ctx;
-
-	err = dbgfs_fill_ctx_dir(dbgfs_dirs[dbgfs_nr_ctxs],
+	dbgfs_fill_ctx_dir(dbgfs_dirs[dbgfs_nr_ctxs],
 			dbgfs_ctxs[dbgfs_nr_ctxs]);
-	if (err)
-		return err;
-
 	dbgfs_nr_ctxs++;
+
 	return 0;
 }
 
@@ -1168,21 +1157,17 @@ static int __init __damon_dbgfs_init(void)
 	int i;
 
 	dbgfs_root = debugfs_create_dir("damon", NULL);
-	if (IS_ERR(dbgfs_root)) {
-		pr_err("failed to create the dbgfs dir\n");
-		return PTR_ERR(dbgfs_root);
-	}
 
-	for (i = 0; i < ARRAY_SIZE(file_names); i++) {
-		if (!debugfs_create_file(file_names[i], 0600, dbgfs_root,
-					NULL, fops[i])) {
-			pr_err("failed to create %s file\n", file_names[i]);
-			return -ENOMEM;
-		}
-	}
+	for (i = 0; i < ARRAY_SIZE(file_names); i++)
+		debugfs_create_file(file_names[i], 0600, dbgfs_root, NULL,
+				fops[i]);
 	dbgfs_fill_ctx_dir(dbgfs_root, dbgfs_ctxs[0]);
 
 	dbgfs_dirs = kmalloc_array(1, sizeof(dbgfs_root), GFP_KERNEL);
+	if (!dbgfs_dirs) {
+		debugfs_remove(dbgfs_root);
+		return -ENOMEM;
+	}
 	dbgfs_dirs[0] = dbgfs_root;
 
 	return 0;
@@ -1197,14 +1182,24 @@ static int __init damon_dbgfs_init(void)
 	int rc;
 
 	dbgfs_ctxs = kmalloc(sizeof(*dbgfs_ctxs), GFP_KERNEL);
-	dbgfs_ctxs[0] = dbgfs_new_ctx();
-	if (!dbgfs_ctxs[0])
+	if (!dbgfs_ctxs) {
+		pr_err("%s: dbgfs ctxs alloc failed\n", __func__);
 		return -ENOMEM;
+	}
+	dbgfs_ctxs[0] = dbgfs_new_ctx();
+	if (!dbgfs_ctxs[0]) {
+		kfree(dbgfs_ctxs);
+		pr_err("%s: dbgfs ctx alloc failed\n", __func__);
+		return -ENOMEM;
+	}
 	dbgfs_nr_ctxs = 1;
 
 	rc = __damon_dbgfs_init();
-	if (rc)
+	if (rc) {
+		kfree(dbgfs_ctxs[0]);
+		kfree(dbgfs_ctxs);
 		pr_err("%s: dbgfs init failed\n", __func__);
+	}
 
 	return rc;
 }
