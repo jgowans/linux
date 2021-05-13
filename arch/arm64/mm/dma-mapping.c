@@ -13,6 +13,9 @@
 
 #include <asm/cacheflush.h>
 
+const struct dma_map_ops *dma_ops;
+EXPORT_SYMBOL(dma_ops);
+
 void arch_sync_dma_for_device(phys_addr_t paddr, size_t size,
 		enum dma_data_direction dir)
 {
