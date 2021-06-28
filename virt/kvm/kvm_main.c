@@ -2196,17 +2196,25 @@ static int kvm_try_get_pfn(kvm_pfn_t pfn)
 	return get_page_unless_zero(pfn_to_page(pfn));
 }
 
+/*
+ * The returned pfn is not aligned to size; rather it is aligned to the same
+ * offset as addr. Callers who don't care about size can use pfn directly;
+ * callers who want to create huge pages and hence do care about size need
+ * to do their own alignment of pfn to size.
+ */
 static int hva_to_pfn_remapped(struct vm_area_struct *vma,
 			       unsigned long addr, bool *async,
 			       bool write_fault, bool *writable,
-			       kvm_pfn_t *p_pfn)
+			       kvm_pfn_t *p_pfn, unsigned long *size)
 {
 	kvm_pfn_t pfn;
-	pte_t *ptep;
+	pte_t *ptep = NULL;
+	pmd_t *pmdp = NULL;
+	pud_t *pudp = NULL;
 	spinlock_t *ptl;
-	int r;
+	int r = 0;
 
-	r = follow_pte(vma->vm_mm, addr, &ptep, &ptl);
+	r = follow_invalidate_pte(vma->vm_mm, addr, NULL, &ptep, &pmdp, &pudp, &ptl);
 	if (r) {
 		/*
 		 * get_user_pages fails for VM_IO and VM_PFNMAP vmas and does
@@ -2221,19 +2229,44 @@ static int hva_to_pfn_remapped(struct vm_area_struct *vma,
 		if (r)
 			return r;
 
-		r = follow_pte(vma->vm_mm, addr, &ptep, &ptl);
+		r = follow_invalidate_pte(vma->vm_mm, addr, NULL, &ptep, &pmdp, &pudp, &ptl);
 		if (r)
 			return r;
 	}
 
-	if (write_fault && !pte_write(*ptep)) {
-		pfn = KVM_PFN_ERR_RO_FAULT;
-		goto out;
+	if (pudp) {
+		if (write_fault && !pud_write(*pudp)) {
+			pfn = KVM_PFN_ERR_RO_FAULT;
+			goto out;
+		}
+		if (writable)
+			*writable = pud_write(*pudp);
+		pfn = pud_pfn(*pudp);
+		pfn += (addr & (PUD_SIZE - 1)) >> PAGE_SHIFT;
+		if (size)
+			*size = PUD_SIZE;
+	} else if (pmdp) {
+		if (write_fault && !pmd_write(*pmdp)) {
+			pfn = KVM_PFN_ERR_RO_FAULT;
+			goto out;
+		}
+		if (writable)
+			*writable = pmd_write(*pmdp);
+		pfn = pmd_pfn(*pmdp);
+		pfn += (addr & (PMD_SIZE - 1)) >> PAGE_SHIFT;
+		if (size)
+			*size = PMD_SIZE;
+	} else {
+		if (write_fault && !pte_write(*ptep)) {
+			pfn = KVM_PFN_ERR_RO_FAULT;
+			goto out;
+		}
+		if (writable)
+			*writable = pte_write(*ptep);
+		pfn = pte_pfn(*ptep);
+		if (size)
+			*size = PAGE_SIZE;
 	}
-
-	if (writable)
-		*writable = pte_write(*ptep);
-	pfn = pte_pfn(*ptep);
 
 	/*
 	 * Get a reference here because callers of *hva_to_pfn* and
@@ -2251,12 +2284,19 @@ static int hva_to_pfn_remapped(struct vm_area_struct *vma,
 	 * tail pages of non-compound higher order allocations, which
 	 * would then underflow the refcount when the caller does the
 	 * required put_page. Don't allow those pages here.
+	 *
+	 * TODO: does this need to be updated for huge PTEs??
 	 */ 
 	if (!kvm_try_get_pfn(pfn))
 		r = -EFAULT;
 
 out:
-	pte_unmap_unlock(ptep, ptl);
+	if (pudp)
+		pte_unmap_unlock(pudp, ptl);
+	else if (pmdp)
+		pte_unmap_unlock(pmdp, ptl);
+	else
+		pte_unmap_unlock(ptep, ptl);
 	*p_pfn = pfn;
 
 	return r;
@@ -2277,11 +2317,18 @@ out:
  *     whether the mapping is writable.
  */
 static kvm_pfn_t hva_to_pfn(unsigned long addr, bool atomic, bool *async,
-			bool write_fault, bool *writable)
+			bool write_fault, bool *writable, unsigned long *size)
 {
 	struct vm_area_struct *vma;
 	kvm_pfn_t pfn = 0;
 	int npages, r;
+
+	/*
+	 * Only figure out size for PFNMAP VMAs.
+	 * THP adjust or hugetlbfs vma_size is used otherwise.
+	 */
+	if (size)
+		*size = 0;
 
 	/* we can do it either atomically or asynchronously, not both */
 	BUG_ON(atomic && async);
@@ -2309,7 +2356,7 @@ retry:
 	if (vma == NULL)
 		pfn = KVM_PFN_ERR_FAULT;
 	else if (vma->vm_flags & (VM_IO | VM_PFNMAP)) {
-		r = hva_to_pfn_remapped(vma, addr, async, write_fault, writable, &pfn);
+		r = hva_to_pfn_remapped(vma, addr, async, write_fault, writable, &pfn, size);
 		if (r == -EAGAIN)
 			goto retry;
 		if (r < 0)
@@ -2326,7 +2373,7 @@ exit:
 
 kvm_pfn_t __gfn_to_pfn_memslot(struct kvm_memory_slot *slot, gfn_t gfn,
 			       bool atomic, bool *async, bool write_fault,
-			       bool *writable, hva_t *hva)
+			       bool *writable, hva_t *hva, unsigned long *pfn_size)
 {
 	unsigned long addr = __gfn_to_hva_many(slot, gfn, NULL, write_fault);
 
@@ -2352,7 +2399,7 @@ kvm_pfn_t __gfn_to_pfn_memslot(struct kvm_memory_slot *slot, gfn_t gfn,
 	}
 
 	return hva_to_pfn(addr, atomic, async, write_fault,
-			  writable);
+			  writable, pfn_size);
 }
 EXPORT_SYMBOL_GPL(__gfn_to_pfn_memslot);
 
@@ -2360,19 +2407,19 @@ kvm_pfn_t gfn_to_pfn_prot(struct kvm *kvm, gfn_t gfn, bool write_fault,
 		      bool *writable)
 {
 	return __gfn_to_pfn_memslot(gfn_to_memslot(kvm, gfn), gfn, false, NULL,
-				    write_fault, writable, NULL);
+				    write_fault, writable, NULL, NULL);
 }
 EXPORT_SYMBOL_GPL(gfn_to_pfn_prot);
 
 kvm_pfn_t gfn_to_pfn_memslot(struct kvm_memory_slot *slot, gfn_t gfn)
 {
-	return __gfn_to_pfn_memslot(slot, gfn, false, NULL, true, NULL, NULL);
+	return __gfn_to_pfn_memslot(slot, gfn, false, NULL, true, NULL, NULL, NULL);
 }
 EXPORT_SYMBOL_GPL(gfn_to_pfn_memslot);
 
 kvm_pfn_t gfn_to_pfn_memslot_atomic(struct kvm_memory_slot *slot, gfn_t gfn)
 {
-	return __gfn_to_pfn_memslot(slot, gfn, true, NULL, true, NULL, NULL);
+	return __gfn_to_pfn_memslot(slot, gfn, true, NULL, true, NULL, NULL, NULL);
 }
 EXPORT_SYMBOL_GPL(gfn_to_pfn_memslot_atomic);
 
