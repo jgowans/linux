@@ -4905,7 +4905,7 @@ int follow_invalidate_pte(struct mm_struct *mm, unsigned long address,
 	pmd = pmd_offset(pud, address);
 	VM_BUG_ON(pmd_trans_huge(*pmd));
 
-	if (pmd_huge(*pmd)) {
+	if (pmd_leaf(*pmd)) {
 		if (!pmdpp)
 			goto out;
 
@@ -4916,7 +4916,7 @@ int follow_invalidate_pte(struct mm_struct *mm, unsigned long address,
 			mmu_notifier_invalidate_range_start(range);
 		}
 		*ptlp = pmd_lock(mm, pmd);
-		if (pmd_huge(*pmd)) {
+		if (pmd_leaf(*pmd)) {
 			*pmdpp = pmd;
 			return 0;
 		}
