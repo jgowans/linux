@@ -4882,7 +4882,7 @@ int __pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address)
 
 int follow_invalidate_pte(struct mm_struct *mm, unsigned long address,
 			  struct mmu_notifier_range *range, pte_t **ptepp,
-			  pmd_t **pmdpp, spinlock_t **ptlp)
+			  pmd_t **pmdpp, pud_t **pudpp, spinlock_t **ptlp)
 {
 	pgd_t *pgd;
 	p4d_t *p4d;
@@ -4899,6 +4899,28 @@ int follow_invalidate_pte(struct mm_struct *mm, unsigned long address,
 		goto out;
 
 	pud = pud_offset(p4d, address);
+
+	if (pud_huge(*pud)) {
+		if (!pudpp)
+			goto out;
+
+		if (range) {
+			mmu_notifier_range_init(range, MMU_NOTIFY_CLEAR, 0,
+						NULL, mm, address & PUD_MASK,
+						(address & PUD_MASK) + PUD_SIZE);
+			mmu_notifier_invalidate_range_start(range);
+		}
+		*ptlp = pud_lock(mm, pud);
+		/* Did it dematerialize under us before we got the lock? */
+		if (pud_huge(*pud)) {
+			*pudpp = pud;
+			return 0;
+		}
+		spin_unlock(*ptlp);
+		if (range)
+			mmu_notifier_invalidate_range_end(range);
+	}
+
 	if (pud_none(*pud) || unlikely(pud_bad(*pud)))
 		goto out;
 
@@ -4964,14 +4986,15 @@ out:
  * should be taken for read.
  *
  * KVM uses this function.  While it is arguably less bad than ``follow_pfn``,
- * it is not a good general-purpose API.
+ * it is not a good general-purpose API. It does not handle huge PTEs, for that
+ * use the wrapped follow_invalidate_pte.
  *
  * Return: zero on success, -ve otherwise.
  */
 int follow_pte(struct mm_struct *mm, unsigned long address,
 	       pte_t **ptepp, spinlock_t **ptlp)
 {
-	return follow_invalidate_pte(mm, address, NULL, ptepp, NULL, ptlp);
+	return follow_invalidate_pte(mm, address, NULL, ptepp, NULL, NULL, ptlp);
 }
 EXPORT_SYMBOL_GPL(follow_pte);
 

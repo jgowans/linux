@@ -807,6 +807,7 @@ static void dax_entry_mkclean(struct address_space *mapping, pgoff_t index,
 	struct vm_area_struct *vma;
 	pte_t pte, *ptep = NULL;
 	pmd_t *pmdp = NULL;
+	pud_t *pudp = NULL;
 	spinlock_t *ptl;
 
 	i_mmap_lock_read(mapping);
@@ -827,7 +828,11 @@ static void dax_entry_mkclean(struct address_space *mapping, pgoff_t index,
 		 * taking any lock.
 		 */
 		if (follow_invalidate_pte(vma->vm_mm, address, &range, &ptep,
-					  &pmdp, &ptl))
+					  &pmdp, &pudp, &ptl))
+			continue;
+
+		/* DAX doesn't create huge PUDs. */
+		if (WARN_ON(pudp))
 			continue;
 
 		/*
