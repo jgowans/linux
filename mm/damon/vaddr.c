@@ -48,7 +48,7 @@ static struct mm_struct *damon_get_mm(struct damon_target *t)
  *
  * Returns 0 on success, or negative error code otherwise.
  */
-static int damon_va_evenly_split_region(struct damon_ctx *ctx,
+static int damon_va_evenly_split_region(struct damon_target *t,
 		struct damon_region *r, unsigned int nr_pieces)
 {
 	unsigned long sz_orig, sz_piece, orig_end;
@@ -72,7 +72,7 @@ static int damon_va_evenly_split_region(struct damon_ctx *ctx,
 		n = damon_new_region(start, start + sz_piece);
 		if (!n)
 			return -ENOMEM;
-		damon_insert_region(n, r, next);
+		damon_insert_region(n, r, next, t);
 		r = n;
 	}
 	/* complement last region for possible rounding error */
@@ -226,7 +226,7 @@ static int damon_va_three_regions(struct damon_target *t,
  *   <BIG UNMAPPED REGION 2>
  *   <stack>
  */
-static void __damon_va_init_regions(struct damon_ctx *c,
+static void __damon_va_init_regions(struct damon_ctx *ctx,
 				     struct damon_target *t)
 {
 	struct damon_region *r;
@@ -241,8 +241,8 @@ static void __damon_va_init_regions(struct damon_ctx *c,
 
 	for (i = 0; i < 3; i++)
 		sz += regions[i].end - regions[i].start;
-	if (c->min_nr_regions)
-		sz /= c->min_nr_regions;
+	if (ctx->min_nr_regions)
+		sz /= ctx->min_nr_regions;
 	if (sz < DAMON_MIN_REGION)
 		sz = DAMON_MIN_REGION;
 
@@ -256,7 +256,7 @@ static void __damon_va_init_regions(struct damon_ctx *c,
 		damon_add_region(r, t);
 
 		nr_pieces = (regions[i].end - regions[i].start) / sz;
-		damon_va_evenly_split_region(c, r, nr_pieces);
+		damon_va_evenly_split_region(t, r, nr_pieces);
 	}
 }
 
@@ -292,8 +292,8 @@ static bool damon_intersect(struct damon_region *r, struct damon_addr_range *re)
  * t		the given target
  * bregions	the three big regions of the target
  */
-static void damon_va_apply_three_regions(struct damon_ctx *ctx,
-		struct damon_target *t, struct damon_addr_range bregions[3])
+static void damon_va_apply_three_regions(struct damon_target *t,
+		struct damon_addr_range bregions[3])
 {
 	struct damon_region *r, *next;
 	unsigned int i = 0;
@@ -305,7 +305,7 @@ static void damon_va_apply_three_regions(struct damon_ctx *ctx,
 				break;
 		}
 		if (i == 3)
-			damon_destroy_region(r);
+			damon_destroy_region(r, t);
 	}
 
 	/* Adjust intersecting regions to fit with the three big regions */
@@ -333,7 +333,7 @@ static void damon_va_apply_three_regions(struct damon_ctx *ctx,
 					ALIGN(br->end, DAMON_MIN_REGION));
 			if (!newr)
 				continue;
-			damon_insert_region(newr, damon_prev_region(r), r);
+			damon_insert_region(newr, damon_prev_region(r), r, t);
 		} else {
 			first->ar.start = ALIGN_DOWN(br->start,
 					DAMON_MIN_REGION);
@@ -353,7 +353,7 @@ void damon_va_update(struct damon_ctx *ctx)
 	damon_for_each_target(t, ctx) {
 		if (damon_va_three_regions(t, three_regions))
 			continue;
-		damon_va_apply_three_regions(ctx, t, three_regions);
+		damon_va_apply_three_regions(t, three_regions);
 	}
 }
 
@@ -454,16 +454,6 @@ bool damon_va_target_valid(void *target)
 	return false;
 }
 
-void damon_va_cleanup(struct damon_ctx *ctx)
-{
-	struct damon_target *t, *next;
-
-	damon_for_each_target_safe(t, next, ctx) {
-		put_pid((struct pid *)t->id);
-		damon_destroy_target(t);
-	}
-}
-
 #ifndef CONFIG_ADVISE_SYSCALLS
 static int damos_madvise(struct damon_target *target, struct damon_region *r,
 			int behavior)
@@ -528,6 +518,6 @@ void damon_va_set_primitives(struct damon_ctx *ctx)
 	ctx->primitive.check_accesses = damon_va_check_accesses;
 	ctx->primitive.reset_aggregated = NULL;
 	ctx->primitive.target_valid = damon_va_target_valid;
-	ctx->primitive.cleanup = damon_va_cleanup;
+	ctx->primitive.cleanup = NULL;
 	ctx->primitive.apply_scheme = damon_va_apply_scheme;
 }

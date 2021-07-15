@@ -32,7 +32,7 @@ static struct dentry **dbgfs_dirs;
 static DEFINE_MUTEX(damon_dbgfs_lock);
 
 /*
- * Returns non-empty string on success, negarive error code otherwise.
+ * Returns non-empty string on success, negative error code otherwise.
  */
 static char *user_input_str(const char __user *buf, size_t count, loff_t *ppos)
 {
@@ -600,7 +600,7 @@ static int add_init_region(struct damon_ctx *c,
 			if (damon_nr_regions(t) > 1) {
 				prev = damon_prev_region(r);
 				if (prev->ar.end > r->ar.start) {
-					damon_destroy_region(r);
+					damon_destroy_region(r, t);
 					return -EINVAL;
 				}
 			}
@@ -621,7 +621,7 @@ static int set_init_regions(struct damon_ctx *c, const char *str, ssize_t len)
 
 	damon_for_each_target(t, c) {
 		damon_for_each_region_safe(r, next, t)
-			damon_destroy_region(r);
+			damon_destroy_region(r, t);
 	}
 
 	while (pos < len) {
@@ -640,7 +640,7 @@ static int set_init_regions(struct damon_ctx *c, const char *str, ssize_t len)
 fail:
 	damon_for_each_target(t, c) {
 		damon_for_each_region_safe(r, next, t)
-			damon_destroy_region(r);
+			damon_destroy_region(r, t);
 	}
 	return err;
 }
@@ -708,42 +708,36 @@ static int damon_dbgfs_open(struct inode *inode, struct file *file)
 }
 
 static const struct file_operations attrs_fops = {
-	.owner = THIS_MODULE,
 	.open = damon_dbgfs_open,
 	.read = dbgfs_attrs_read,
 	.write = dbgfs_attrs_write,
 };
 
 static const struct file_operations record_fops = {
-	.owner = THIS_MODULE,
 	.open = damon_dbgfs_open,
 	.read = dbgfs_record_read,
 	.write = dbgfs_record_write,
 };
 
 static const struct file_operations schemes_fops = {
-	.owner = THIS_MODULE,
 	.open = damon_dbgfs_open,
 	.read = dbgfs_schemes_read,
 	.write = dbgfs_schemes_write,
 };
 
 static const struct file_operations target_ids_fops = {
-	.owner = THIS_MODULE,
 	.open = damon_dbgfs_open,
 	.read = dbgfs_target_ids_read,
 	.write = dbgfs_target_ids_write,
 };
 
 static const struct file_operations init_regions_fops = {
-	.owner = THIS_MODULE,
 	.open = damon_dbgfs_open,
 	.read = dbgfs_init_regions_read,
 	.write = dbgfs_init_regions_write,
 };
 
 static const struct file_operations kdamond_pid_fops = {
-	.owner = THIS_MODULE,
 	.open = damon_dbgfs_open,
 	.read = dbgfs_kdamond_pid_read,
 };
@@ -884,7 +878,17 @@ static int dbgfs_after_aggregation(struct damon_ctx *c)
 
 static int dbgfs_before_terminate(struct damon_ctx *ctx)
 {
+	struct damon_target *t, *next;
+
 	dbgfs_flush_rbuffer(ctx->callback.private);
+
+	if (!targetid_is_pid(ctx))
+		return 0;
+
+	damon_for_each_target_safe(t, next, ctx) {
+		put_pid((struct pid *)t->id);
+		damon_destroy_target(t);
+	}
 	return 0;
 }
 
@@ -1132,17 +1136,14 @@ static ssize_t dbgfs_monitor_on_write(struct file *file,
 }
 
 static const struct file_operations mk_contexts_fops = {
-	.owner = THIS_MODULE,
 	.write = dbgfs_mk_context_write,
 };
 
 static const struct file_operations rm_contexts_fops = {
-	.owner = THIS_MODULE,
 	.write = dbgfs_rm_context_write,
 };
 
 static const struct file_operations monitor_on_fops = {
-	.owner = THIS_MODULE,
 	.read = dbgfs_monitor_on_read,
 	.write = dbgfs_monitor_on_write,
 };
