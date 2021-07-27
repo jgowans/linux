@@ -949,6 +949,47 @@ static int user_mem_abort(struct kvm_vcpu *vcpu, phys_addr_t fault_ipa,
 
 	shared = (vma->vm_flags & VM_SHARED);
 
+	mmu_seq = vcpu->kvm->mmu_notifier_seq;
+	/*
+	 * Ensure the read of mmu_notifier_seq happens before we call
+	 * gfn_to_pfn_prot (which calls get_user_pages), so that we don't risk
+	 * the page we just got a reference to gets unmapped before we have a
+	 * chance to grab the mmu_lock, which ensure that if the page gets
+	 * unmapped afterwards, the call to kvm_unmap_gfn will take it away
+	 * from us again properly. This smp_rmb() interacts with the smp_wmb()
+	 * in kvm_mmu_notifier_invalidate_<page|range_end>.
+	 *
+	 * Besides, __gfn_to_pfn_memslot() instead of gfn_to_pfn_prot() is
+	 * used to avoid unnecessary overhead introduced to locate the memory
+	 * slot because it's always fixed even @gfn is adjusted for huge pages.
+	 */
+	smp_rmb();
+	mmap_read_unlock(current->mm);
+
+	gfn = fault_ipa >> PAGE_SHIFT;
+	pfn = __gfn_to_pfn_memslot(memslot, gfn, false, NULL,
+				   write_fault, &writable, NULL, NULL);
+	if (pfn == KVM_PFN_ERR_HWPOISON) {
+		kvm_send_hwpoison_signal(hva, vma_shift);
+		return 0;
+	}
+	if (is_error_noslot_pfn(pfn))
+		return -EFAULT;
+
+	if (kvm_is_device_pfn(pfn)) {
+		device = true;
+
+	} else if (logging_active && !write_fault) {
+		/*
+		 * Only actually map the page as writable if this was a write
+		 * fault.
+		 */
+		writable = false;
+	}
+
+	if (exec_fault && device)
+		return -ENOEXEC;
+
 	switch (vma_shift) {
 #ifndef __PAGETABLE_PMD_FOLDED
 	case PUD_SHIFT:
@@ -974,11 +1015,12 @@ static int user_mem_abort(struct kvm_vcpu *vcpu, phys_addr_t fault_ipa,
 	}
 
 	vma_pagesize = 1UL << vma_shift;
-	if (vma_pagesize == PMD_SIZE || vma_pagesize == PUD_SIZE)
+	if (vma_pagesize == PMD_SIZE || vma_pagesize == PUD_SIZE) {
+		printk("vma_pagesize: 0x%lx\n", vma_pagesize);
 		fault_ipa &= ~(vma_pagesize - 1);
+		pfn = ((pfn << PAGE_SHIFT) & ~(vma_pagesize - 1)) >> PAGE_SHIFT;
+	}
 
-	gfn = fault_ipa >> PAGE_SHIFT;
-	mmap_read_unlock(current->mm);
 
 	/*
 	 * Permission faults just need to update the existing leaf entry,
@@ -992,54 +1034,6 @@ static int user_mem_abort(struct kvm_vcpu *vcpu, phys_addr_t fault_ipa,
 		if (ret)
 			return ret;
 	}
-
-	mmu_seq = vcpu->kvm->mmu_notifier_seq;
-	/*
-	 * Ensure the read of mmu_notifier_seq happens before we call
-	 * gfn_to_pfn_prot (which calls get_user_pages), so that we don't risk
-	 * the page we just got a reference to gets unmapped before we have a
-	 * chance to grab the mmu_lock, which ensure that if the page gets
-	 * unmapped afterwards, the call to kvm_unmap_gfn will take it away
-	 * from us again properly. This smp_rmb() interacts with the smp_wmb()
-	 * in kvm_mmu_notifier_invalidate_<page|range_end>.
-	 *
-	 * Besides, __gfn_to_pfn_memslot() instead of gfn_to_pfn_prot() is
-	 * used to avoid unnecessary overhead introduced to locate the memory
-	 * slot because it's always fixed even @gfn is adjusted for huge pages.
-	 */
-	smp_rmb();
-
-	pfn = __gfn_to_pfn_memslot(memslot, gfn, false, NULL,
-				   write_fault, &writable, NULL, NULL);
-	if (pfn == KVM_PFN_ERR_HWPOISON) {
-		kvm_send_hwpoison_signal(hva, vma_shift);
-		return 0;
-	}
-	if (is_error_noslot_pfn(pfn))
-		return -EFAULT;
-
-	if (kvm_is_device_pfn(pfn)) {
-		/*
-		 * If the page was identified as device early by looking at
-		 * the VMA flags, vma_pagesize is already representing the
-		 * largest quantity we can map.  If instead it was mapped
-		 * via gfn_to_pfn_prot(), vma_pagesize is set to PAGE_SIZE
-		 * and must not be upgraded.
-		 *
-		 * In both cases, we don't let transparent_hugepage_adjust()
-		 * change things at the last minute.
-		 */
-		device = true;
-	} else if (logging_active && !write_fault) {
-		/*
-		 * Only actually map the page as writable if this was a write
-		 * fault.
-		 */
-		writable = false;
-	}
-
-	if (exec_fault && device)
-		return -ENOEXEC;
 
 	spin_lock(&kvm->mmu_lock);
 	pgt = vcpu->arch.hw_mmu->pgt;
