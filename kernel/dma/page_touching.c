@@ -34,6 +34,8 @@
 #include <linux/dma-map-ops.h>
 #include "direct.h"
 #include <linux/moduleparam.h>
+#include <linux/memblock.h>
+#include <linux/pci.h>
 
 /*
  * A wrapper around dma_direct which does a readl on the memory being mapped
@@ -51,12 +53,24 @@ module_param_named(dma_page_touching_enable, dma_page_touching_enable, bool, 040
 MODULE_PARM_DESC(dma_page_touching_enable,
 		"Touch pages allocated for DMA to ensure they are resident");
 
-static void touch_each_page(void *start_addr, size_t size)
+// Space for all devices on first 10 buses. (wasteful as functions are zero).
+#define PFN_BITMAP_BUFFER_ARRAY_SIZE (256 * 10)
+static void *pci_dev_pfn_bitmap_buffers[PFN_BITMAP_BUFFER_ARRAY_SIZE];
+static void *pfn_bitmap_for_dev(struct pci_dev *dev);
+
+// ???
+#define virt_to_pfn(kaddr)	(__pa(kaddr) >> PAGE_SHIFT)
+
+static void touch_each_page(struct pci_dev *pci, void *start_addr, size_t size)
 {
 	int addr_offset;
 
 	for (addr_offset = 0; addr_offset < size; addr_offset += PAGE_SIZE)
 		__raw_readl((char *)start_addr + addr_offset);
+
+	bitmap_set(pfn_bitmap_for_dev(pci),
+			virt_to_pfn(start_addr),
+			(size + PAGE_SIZE) >> PAGE_SHIFT);
 }
 
 static void *page_touching_dma_alloc(struct device *dev, size_t size,
@@ -67,7 +81,7 @@ static void *page_touching_dma_alloc(struct device *dev, size_t size,
 
 	if (!kaddr)
 		return NULL;
-	touch_each_page(kaddr, size);
+	touch_each_page(to_pci_dev(dev), kaddr, size);
 	return kaddr;
 
 }
@@ -80,7 +94,7 @@ static dma_addr_t page_touching_dma_map_page(struct device *dev, struct page *pa
 	dma_addr_t dma_handle = dma_direct_map_page(dev, page, offset, size, dir, attrs);
 
 	if (!(dma_mapping_error(dev, dma_handle)))
-		touch_each_page(page_to_virt(page) + offset, size);
+		touch_each_page(to_pci_dev(dev), page_to_virt(page) + offset, size);
 	return dma_handle;
 }
 
@@ -95,11 +109,25 @@ static int page_touching_dma_map_sg(struct device *dev, struct scatterlist *sgli
 		goto out;
 
 	for_each_sg(sglist, sg, nents, i)
-		touch_each_page(page_to_virt(sg_page(sg)) + sg->offset, sg->length);
+		touch_each_page(to_pci_dev(dev), page_to_virt(sg_page(sg)) + sg->offset, sg->length);
 
 out:
 	return ret;
 
+}
+
+/*
+ * Returns (possibly after lazy allocating) bit bitmap for this dev.
+ * The bitmap will contain sufficient bits up to max_pfn.
+ */
+static void *pfn_bitmap_for_dev(struct pci_dev *dev) {
+	int idx = pci_dev_id(dev);
+	BUG_ON(idx > PFN_BITMAP_BUFFER_ARRAY_SIZE);
+	if (!pci_dev_pfn_bitmap_buffers[idx]) {
+		pci_info(dev, "jgowans Allocating pfn bitmap buffer at idx %i\n", idx);
+		pci_dev_pfn_bitmap_buffers[idx] = kzalloc((max_pfn + 8) / 8, GFP_KERNEL);
+	}
+	return pci_dev_pfn_bitmap_buffers[idx];
 }
 
 /*
@@ -129,6 +157,12 @@ void setup_dma_page_touching_ops(struct device *dev)
 	if (!dma_page_touching_enable || dev->dma_ops)
 		return;
 
-	dev_info(dev, "binding to page touching DMA ops\n");
-	dev->dma_ops = &page_touching_dma_ops;
+	printk("max_pfn %lu max_possible_pfn %llu\n", max_pfn, max_possible_pfn);
+
+	if (dev_is_pci(dev)) {
+		dev_info(dev, "binding to page touching DMA ops\n");
+		dev->dma_ops = &page_touching_dma_ops;
+	} else {
+		dev_info(dev, "jgowans SKIPPING binding as not PCI\n");
+	}
 }
