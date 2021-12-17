@@ -33,6 +33,7 @@
 
 #include <linux/dma-map-ops.h>
 #include "direct.h"
+#include <linux/debugfs.h>
 #include <linux/moduleparam.h>
 #include <linux/memblock.h>
 #include <linux/pci.h>
@@ -55,22 +56,43 @@ MODULE_PARM_DESC(dma_page_touching_enable,
 
 // Space for all devices on first 10 buses. (wasteful as functions are zero).
 #define PFN_BITMAP_BUFFER_ARRAY_SIZE (256 * 10)
-static void *pci_dev_pfn_bitmap_buffers[PFN_BITMAP_BUFFER_ARRAY_SIZE];
+static struct debugfs_u32_array pci_dev_pfn_bitmap_buffers[PFN_BITMAP_BUFFER_ARRAY_SIZE];
 static void *pfn_bitmap_for_dev(struct pci_dev *dev);
+
+struct dentry *debugfs_root;
 
 // ???
 #define virt_to_pfn(kaddr)	(__pa(kaddr) >> PAGE_SHIFT)
 
-static void touch_each_page(struct pci_dev *pci, void *start_addr, size_t size)
+static void touch_each_page(struct pci_dev *pci, void *kaddr, size_t size_bytes)
 {
 	int addr_offset;
+        //int huge_page_idx, free_huge_pages;
 
-	for (addr_offset = 0; addr_offset < size; addr_offset += PAGE_SIZE)
-		__raw_readl((char *)start_addr + addr_offset);
-
+	for (addr_offset = 0; addr_offset < size_bytes; addr_offset += PAGE_SIZE)
+		__raw_readl((char *)kaddr + addr_offset);
 	bitmap_set(pfn_bitmap_for_dev(pci),
-			virt_to_pfn(start_addr),
-			(size + PAGE_SIZE) >> PAGE_SHIFT);
+			virt_to_pfn(kaddr),
+			(size_bytes + PAGE_SIZE - 1) >> PAGE_SHIFT);
+
+	BUG_ON(virt_to_pfn(kaddr) + ((size_bytes + PAGE_SIZE - 1) >> PAGE_SHIFT) > max_pfn);
+
+#if 0
+	printk("Set %lu bits for pfn 0x%lx\n", (size_bytes + PAGE_SIZE - 1) >> PAGE_SHIFT, virt_to_pfn(kaddr));
+	printk("Bitmap weight: %u\n", bitmap_weight(pfn_bitmap_for_dev(pci), max_pfn));
+
+	free_huge_pages = 0;
+	for (huge_page_idx = 0; huge_page_idx < (max_pfn / 512); ++huge_page_idx) {
+		if (bitmap_empty(
+			((unsigned long *)pfn_bitmap_for_dev(pci)) + (huge_page_idx * ((512 / 8) / 8)),
+			512)) {
+			++free_huge_pages;
+		}
+	}
+	printk("Free huge pages %i\n", free_huge_pages);
+
+	//dump_stack();
+#endif
 }
 
 static void *page_touching_dma_alloc(struct device *dev, size_t size,
@@ -123,11 +145,17 @@ out:
 static void *pfn_bitmap_for_dev(struct pci_dev *dev) {
 	int idx = pci_dev_id(dev);
 	BUG_ON(idx > PFN_BITMAP_BUFFER_ARRAY_SIZE);
-	if (!pci_dev_pfn_bitmap_buffers[idx]) {
+	// Not yet allocated a buffer?
+	if (!pci_dev_pfn_bitmap_buffers[idx].array) {
+		// TODO: round up to u32
+		size_t n_bytes = (max_pfn + 8) / 8;
 		pci_info(dev, "jgowans Allocating pfn bitmap buffer at idx %i\n", idx);
-		pci_dev_pfn_bitmap_buffers[idx] = kzalloc((max_pfn + 8) / 8, GFP_KERNEL);
+		pci_dev_pfn_bitmap_buffers[idx].array = kzalloc(n_bytes, GFP_KERNEL);
+		pci_dev_pfn_bitmap_buffers[idx].n_elements = n_bytes / 4;
+		debugfs_create_u32_array(dev_name(&dev->dev), 0444, debugfs_root,
+				&pci_dev_pfn_bitmap_buffers[idx]);
 	}
-	return pci_dev_pfn_bitmap_buffers[idx];
+	return pci_dev_pfn_bitmap_buffers[idx].array;
 }
 
 /*
@@ -154,10 +182,16 @@ const static struct dma_map_ops page_touching_dma_ops = {
 
 void setup_dma_page_touching_ops(struct device *dev)
 {
+	static bool invoked; // trollololo.
+
 	if (!dma_page_touching_enable || dev->dma_ops)
 		return;
 
-	printk("max_pfn %lu max_possible_pfn %llu\n", max_pfn, max_possible_pfn);
+	if (!invoked) {
+		invoked = true;
+		printk("max_pfn %lu max_possible_pfn %llu\n", max_pfn, max_possible_pfn);
+		debugfs_root = debugfs_create_dir("page_touching", NULL);
+	}
 
 	if (dev_is_pci(dev)) {
 		dev_info(dev, "binding to page touching DMA ops\n");
