@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 
-#include <linux/dcache.h>
+#include "mmuse.h"
 #include <linux/fs.h>
 #include <linux/module.h>
 #include <linux/fs_context.h>
