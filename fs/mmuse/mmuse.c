@@ -20,7 +20,7 @@ static int mmuse_fill_super(struct super_block *sb, struct fs_context *fc)
 
 	inode->i_ino = get_next_ino();
 	inode->i_mode = S_IFDIR;
-	inode->i_op = &simple_dir_inode_operations;
+	inode->i_op = &mmuse_dir_inode_operations;
 	inode->i_fop = &simple_dir_operations;
 	inode->i_atime = inode->i_mtime = inode->i_ctime = current_time(inode);
 	/* directory inodes start off with i_nlink == 2 (for "." entry) */
@@ -36,7 +36,8 @@ static int mmuse_fill_super(struct super_block *sb, struct fs_context *fc)
 
 static int mmuse_get_tree(struct fs_context *fc)
 {
-	return get_tree_nodev(fc, mmuse_fill_super);
+	int ret = get_tree_nodev(fc, mmuse_fill_super);
+	return mmuse_create_admin_file(fc->root);
 }
 
 static const struct fs_context_operations mmuse_context_ops = {
