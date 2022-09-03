@@ -23,11 +23,13 @@
 
 #include <linux/compat.h>
 #include <linux/device.h>
+#include <linux/delay.h>
 #include <linux/fs.h>
 #include <linux/highmem.h>
 #include <linux/iommu.h>
 #include <linux/module.h>
 #include <linux/mm.h>
+#include <linux/mmu_notifier.h>
 #include <linux/kthread.h>
 #include <linux/rbtree.h>
 #include <linux/sched/signal.h>
@@ -79,6 +81,7 @@ struct vfio_iommu {
 	bool			dirty_page_tracking;
 	bool			container_open;
 	struct list_head	emulated_iommu_groups;
+	struct mmu_notifier 	mmu_notifier;
 };
 
 struct vfio_domain {
@@ -1110,7 +1113,8 @@ static long vfio_unmap_unpin(struct vfio_iommu *iommu, struct vfio_dma *dma,
 		phys_addr_t phys, next;
 
 		phys = iommu_iova_to_phys(domain->domain, iova);
-		if (WARN_ON(!phys)) {
+		//if (WARN_ON(!phys)) {
+		if (!phys) {
 			iova += PAGE_SIZE;
 			continue;
 		}
@@ -1487,8 +1491,54 @@ unwind:
 	return ret;
 }
 
+static int vfio_mmu_notifier_invalidate_range_start(struct mmu_notifier *mn,
+					const struct mmu_notifier_range *range)
+{
+	struct rb_node* vfio_dma_node;
+	struct vfio_dma *pos, *n;
+	struct vfio_iommu *vfio_iommu;
+
+	vfio_iommu = container_of(mn, struct vfio_iommu, mmu_notifier);
+	BUG_ON(!vfio_iommu);
+
+	vfio_dma_node = vfio_find_dma_first_node(vfio_iommu, range->start,
+			range->end - range->start);
+	rbtree_postorder_for_each_entry_safe(pos, n, &vfio_iommu->dma_list, node) {
+		if (pos->vaddr <= range->start
+				&& (pos->vaddr + pos->size) >= range->end) {
+			printk("Yes!!! it's for us!\n");
+			return 0;
+		}
+	}
+	//printk("not for us\n");
+	//printk("vfio_mmu_notifier_invalidate_range_start\n");
+	//mdelay(100);
+	return 0;
+}
+
+static void vfio_mmu_notifier_invalidate_range_end(struct mmu_notifier *mn,
+					const struct mmu_notifier_range *range)
+{
+	//printk("vfio_mmu_notifier_invalidate_range_end\n");
+}
+
+static void vfio_mmu_notifier_change_pte(struct mmu_notifier *mn,
+					struct mm_struct *mm,
+					unsigned long address,
+					pte_t pte)
+{
+	dump_stack();
+	printk("vfio_mmu_notifier_change_pte: 0x%lx\n", address);
+}
+
+static const struct mmu_notifier_ops vfio_mmu_notifier_ops = {
+	.invalidate_range_start	= vfio_mmu_notifier_invalidate_range_start,
+	.invalidate_range_end	= vfio_mmu_notifier_invalidate_range_end,
+	.change_pte		= vfio_mmu_notifier_change_pte,
+};
+
 static int vfio_pin_map_dma(struct vfio_iommu *iommu, struct vfio_dma *dma,
-			    size_t map_size)
+			    size_t map_size, bool unpinned)
 {
 	dma_addr_t iova = dma->iova;
 	unsigned long vaddr = dma->vaddr;
@@ -1499,7 +1549,8 @@ static int vfio_pin_map_dma(struct vfio_iommu *iommu, struct vfio_dma *dma,
 	int ret = 0;
 
 	vfio_batch_init(&batch);
-
+	
+	if (!unpinned) { /* excuse my formatting */
 	while (size) {
 		/* Pin a contiguous chunk of memory */
 		npage = vfio_pin_pages_remote(dma, vaddr + dma->size,
@@ -1523,6 +1574,17 @@ static int vfio_pin_map_dma(struct vfio_iommu *iommu, struct vfio_dma *dma,
 
 		size -= npage << PAGE_SHIFT;
 		dma->size += npage << PAGE_SHIFT;
+	}
+	} else {
+		printk("unmapped; skipping mapping\n");
+		printk("iommu->mmu_notifier.ops %p\n", iommu->mmu_notifier.ops);
+		if (!iommu->mmu_notifier.ops) {
+			iommu->mmu_notifier.ops = &vfio_mmu_notifier_ops;
+			ret = mmu_notifier_register(&iommu->mmu_notifier, current->mm);
+			if (ret)
+				printk("mmu_notifier_register failed!!!\n");
+		}
+		dma->size = size;
 	}
 
 	vfio_batch_fini(&batch);
@@ -1556,7 +1618,8 @@ static bool vfio_iommu_iova_dma_valid(struct vfio_iommu *iommu,
 }
 
 static int vfio_dma_do_map(struct vfio_iommu *iommu,
-			   struct vfio_iommu_type1_dma_map *map)
+			   struct vfio_iommu_type1_dma_map *map,
+			   bool unpinned)
 {
 	bool set_vaddr = map->flags & VFIO_DMA_MAP_FLAG_VADDR;
 	dma_addr_t iova = map->iova;
@@ -1674,7 +1737,7 @@ static int vfio_dma_do_map(struct vfio_iommu *iommu,
 	if (list_empty(&iommu->domain_list))
 		dma->size = size;
 	else
-		ret = vfio_pin_map_dma(iommu, dma, size);
+		ret = vfio_pin_map_dma(iommu, dma, size, unpinned);
 
 	if (!ret && iommu->dirty_page_tracking) {
 		ret = vfio_dma_bitmap_alloc(dma, pgsize);
@@ -2824,7 +2887,7 @@ static int vfio_iommu_type1_get_info(struct vfio_iommu *iommu,
 			-EFAULT : 0;
 }
 
-static int vfio_iommu_type1_map_dma(struct vfio_iommu *iommu,
+static int vfio_iommu_type1_map_dma_unpinned(struct vfio_iommu *iommu,
 				    unsigned long arg)
 {
 	struct vfio_iommu_type1_dma_map map;
@@ -2840,7 +2903,30 @@ static int vfio_iommu_type1_map_dma(struct vfio_iommu *iommu,
 	if (map.argsz < minsz || map.flags & ~mask)
 		return -EINVAL;
 
-	return vfio_dma_do_map(iommu, &map);
+	return vfio_dma_do_map(iommu, &map, true);
+}
+
+static int vfio_iommu_type1_map_dma(struct vfio_iommu *iommu,
+				    unsigned long arg)
+{
+	struct vfio_iommu_type1_dma_map map;
+	unsigned long minsz;
+	uint32_t mask = VFIO_DMA_MAP_FLAG_READ | VFIO_DMA_MAP_FLAG_WRITE |
+			VFIO_DMA_MAP_FLAG_VADDR;
+	int ret;
+
+	minsz = offsetofend(struct vfio_iommu_type1_dma_map, size);
+
+	if (copy_from_user(&map, (void __user *)arg, minsz))
+		return -EFAULT;
+
+	if (map.argsz < minsz || map.flags & ~mask)
+		return -EINVAL;
+
+	/* hack to use existing QEMU */
+	ret = vfio_dma_do_map(iommu, &map, true);
+	printk("vfio_iommu_type1_map_dma ret: %i\n", ret);
+	return ret;
 }
 
 static int vfio_iommu_type1_unmap_dma(struct vfio_iommu *iommu,
@@ -3012,6 +3098,8 @@ static long vfio_iommu_type1_ioctl(void *iommu_data,
 		return vfio_iommu_type1_get_info(iommu, arg);
 	case VFIO_IOMMU_MAP_DMA:
 		return vfio_iommu_type1_map_dma(iommu, arg);
+	case VFIO_IOMMU_MAP_DMA_UNPINNED:
+		return vfio_iommu_type1_map_dma_unpinned(iommu, arg);
 	case VFIO_IOMMU_UNMAP_DMA:
 		return vfio_iommu_type1_unmap_dma(iommu, arg);
 	case VFIO_IOMMU_DIRTY_PAGES:

@@ -1351,4 +1351,6 @@ struct vfio_iommu_spapr_tce_remove {
 
 /* ***************************************************************** */
 
+#define VFIO_IOMMU_MAP_DMA_UNPINNED _IO(VFIO_TYPE, VFIO_BASE + 21)
+
 #endif /* _UAPIVFIO_H */
