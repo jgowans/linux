@@ -46,7 +46,7 @@
  * Set with kernel cmd line param:
  * page_touching.dma_page_touching_enable=y
  */
-static bool dma_page_touching_enable __ro_after_init;
+static bool dma_page_touching_enable __ro_after_init = 1;
 module_param_named(dma_page_touching_enable, dma_page_touching_enable, bool, 0400);
 MODULE_PARM_DESC(dma_page_touching_enable,
 		"Touch pages allocated for DMA to ensure they are resident");
