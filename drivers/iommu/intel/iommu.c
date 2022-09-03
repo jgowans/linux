@@ -4335,6 +4335,32 @@ static size_t intel_iommu_unmap_pages(struct iommu_domain *domain,
 	return intel_iommu_unmap(domain, iova, size, gather);
 }
 
+static int intel_iommu_forcibly_remap_pte(struct iommu_domain *domain,
+					  dma_addr_t const iovfn_beg,
+					  dma_addr_t const iovfn_end,
+					  phys_addr_t const pfn)
+{
+	struct dmar_domain *dmar_domain = to_dmar_domain(domain);
+	struct dma_pte *pte;
+	int level = 1;
+
+	if ((iovfn_end - iovfn_beg) > 1) {
+		printk("iovfn range too large: %llu -> %llu", iovfn_beg, iovfn_end);
+	}
+
+#if 0
+	dma_pte_free_pagetable(dmar_domain, iovfn_beg, iovfn_end - 1,
+			       original_largepage_lvl + 1);
+#endif
+
+	pte = pfn_to_dma_pte(dmar_domain, iovfn_beg, &level);
+	//printk("pfn_to_dma_pte iovfn = 0x%llx got level %i\n", iovfn_beg, level);
+	WARN_ON(!pte);
+	pte->val = (pfn << VTD_PAGE_SHIFT) | DMA_PTE_READ | DMA_PTE_WRITE;
+	domain_flush_cache(dmar_domain, pte, PAGE_SIZE);
+	return 0;
+}
+
 static void intel_iommu_tlb_sync(struct iommu_domain *domain,
 				 struct iommu_iotlb_gather *gather)
 {
@@ -4768,6 +4794,7 @@ const struct iommu_ops intel_iommu_ops = {
 		.iova_to_phys		= intel_iommu_iova_to_phys,
 		.free			= intel_iommu_domain_free,
 		.enforce_cache_coherency = intel_iommu_enforce_cache_coherency,
+		.forcibly_remap_pte = intel_iommu_forcibly_remap_pte,
 	}
 };
 
