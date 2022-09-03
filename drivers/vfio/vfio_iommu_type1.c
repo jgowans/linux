@@ -1497,22 +1497,34 @@ static int vfio_mmu_notifier_invalidate_range_start(struct mmu_notifier *mn,
 	struct rb_node* vfio_dma_node;
 	struct vfio_dma *pos, *n;
 	struct vfio_iommu *vfio_iommu;
+	struct vfio_domain *d;
+	dma_addr_t iova_start, iova_end;
+	bool found = false;
 
 	vfio_iommu = container_of(mn, struct vfio_iommu, mmu_notifier);
 	BUG_ON(!vfio_iommu);
 
-	vfio_dma_node = vfio_find_dma_first_node(vfio_iommu, range->start,
-			range->end - range->start);
 	rbtree_postorder_for_each_entry_safe(pos, n, &vfio_iommu->dma_list, node) {
 		if (pos->vaddr <= range->start
 				&& (pos->vaddr + pos->size) >= range->end) {
-			printk("Yes!!! it's for us!\n");
-			return 0;
+			found = true;
+			break;
 		}
 	}
-	//printk("not for us\n");
-	//printk("vfio_mmu_notifier_invalidate_range_start\n");
-	//mdelay(100);
+	if (!found)
+		return 0;
+
+#if 0
+	list_for_each_entry(d, &vfio_iommu->domain_list, next) {
+		ret = iommu_map(d->domain, iova, (phys_addr_t)pfn << PAGE_SHIFT,
+				npage << PAGE_SHIFT, prot | IOMMU_CACHE);
+		if (ret)
+			goto unwind;
+
+		cond_resched();
+	}
+#endif
+
 	return 0;
 }
 
@@ -1527,8 +1539,36 @@ static void vfio_mmu_notifier_change_pte(struct mmu_notifier *mn,
 					unsigned long address,
 					pte_t pte)
 {
-	dump_stack();
-	printk("vfio_mmu_notifier_change_pte: 0x%lx\n", address);
+	struct rb_node* vfio_dma_node;
+	struct vfio_dma *pos, *n;
+	struct vfio_iommu *vfio_iommu;
+	struct vfio_domain *d;
+	dma_addr_t iova;
+	bool found = false;
+	int ret;
+
+	vfio_iommu = container_of(mn, struct vfio_iommu, mmu_notifier);
+	BUG_ON(!vfio_iommu);
+
+	/* TODO: ensure addr being set for single page. Look at PTE size? */
+
+	rbtree_postorder_for_each_entry_safe(pos, n, &vfio_iommu->dma_list, node) {
+		if (pos->vaddr <= address && (pos->vaddr + pos->size) >= address) {
+			found = true;
+			break;
+		}
+	}
+	if (!found)
+		return;
+
+	iova = pos->iova + (address - pos->vaddr);
+	iova = iova & ~(PAGE_SIZE - 1);
+
+	list_for_each_entry(d, &vfio_iommu->domain_list, next) {
+		ret = iommu_forcibly_remap_pte(d->domain,
+				iova >> PAGE_SHIFT, (iova >> PAGE_SHIFT) + 1,
+				pte_pfn(pte));
+	}
 }
 
 static const struct mmu_notifier_ops vfio_mmu_notifier_ops = {
