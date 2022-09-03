@@ -2575,6 +2575,29 @@ int iommu_set_pgtable_quirks(struct iommu_domain *domain,
 }
 EXPORT_SYMBOL_GPL(iommu_set_pgtable_quirks);
 
+int iommu_forcibly_remap_pte(struct iommu_domain *domain,
+			     dma_addr_t const iovfn_beg,
+			     dma_addr_t const iovfn_end,
+			     phys_addr_t const pfn)
+{
+	int ret;
+
+	if (unlikely(!domain || !domain->ops))
+		return -ENODEV;
+
+	if (unlikely(!(domain->type & __IOMMU_DOMAIN_PAGING)))
+		return -EPERM;
+
+	if (unlikely(!domain->ops->forcibly_remap_pte))
+		return -ENOTSUPP;
+
+	ret = domain->ops->forcibly_remap_pte(domain, iovfn_beg, iovfn_end, pfn);
+	if (ret == 0 && domain->ops->iotlb_sync_map)
+		domain->ops->iotlb_sync_map(domain, iovfn_beg << PAGE_SHIFT,
+				(iovfn_end - iovfn_beg) << PAGE_SHIFT);
+	return ret;
+}
+
 void iommu_get_resv_regions(struct device *dev, struct list_head *list)
 {
 	const struct iommu_ops *ops = dev_iommu_ops(dev);

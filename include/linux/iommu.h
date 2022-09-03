@@ -314,6 +314,11 @@ struct iommu_domain_ops {
 				  unsigned long quirks);
 
 	void (*free)(struct iommu_domain *domain);
+
+	int (*forcibly_remap_pte)(struct iommu_domain *domain,
+				  dma_addr_t const iovfn_beg,
+				  dma_addr_t const iovfn_end,
+				  phys_addr_t const pfn);
 };
 
 /**
@@ -496,6 +501,11 @@ extern struct iommu_domain *iommu_group_default_domain(struct iommu_group *);
 int iommu_enable_nesting(struct iommu_domain *domain);
 int iommu_set_pgtable_quirks(struct iommu_domain *domain,
 		unsigned long quirks);
+
+extern int iommu_forcibly_remap_pte(struct iommu_domain *domain,
+				    dma_addr_t const iovfn_beg,
+				    dma_addr_t const iovfn_end,
+				    phys_addr_t const pfn);
 
 void iommu_set_dma_strict(void);
 
