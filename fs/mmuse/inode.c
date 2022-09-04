@@ -4,6 +4,10 @@
 #include <linux/fs.h>
 #include <linux/ramfs.h>
 
+struct admin_inode_data {
+	bool set_up;
+};
+
 const struct inode_operations file_inode_operations = {
 	.setattr	= simple_setattr,
 	.getattr	= simple_getattr,
@@ -61,10 +65,41 @@ const struct inode_operations mmuse_dir_inode_operations = {
 	.lookup		= simple_lookup,
 };
 
+static int admin_open(struct inode *node, struct file *filp)
+{
+	printk("admin file opened\n");
+	return 0;
+}
+
+static long admin_ioctl_set_backing_file(struct file *filp, unsigned long arg)
+{
+	printk("would set backing file\n");
+	return 0;
+}
+static long admin_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+	printk("ioctl %u invoked on admin file\n", cmd);
+	switch (cmd) {
+	case MMUSE_ADMIN_IOCTL_SET_BACKING_FILE:
+		return admin_ioctl_set_backing_file(filp, arg);
+	default:
+		printk("invalid ioctl\n");
+		return -EINVAL;
+	}
+}
+
+const struct file_operations admin_fops = {
+	.open = admin_open,
+	.unlocked_ioctl = admin_ioctl,
+};
+
 int mmuse_create_admin_file(struct dentry *root)
 {
 	struct dentry *dentry;
 	struct inode *inode;
+	struct admin_inode_data *private;
+
+	private = kzalloc(sizeof(*private), GFP_KERNEL);
 
 	dentry = d_alloc_name(root, "admin");
 	dget(dentry);	/* Extra count - pin the dentry in core */
@@ -80,9 +115,10 @@ int mmuse_create_admin_file(struct dentry *root)
 	inode_init_owner(&init_user_ns, inode, root->d_inode, S_IFREG | 0644);
 	inode->i_ino = get_next_ino();
 	inode->i_blocks = 0;
-	//inode->i_fop = &ramfs_file_operations;
+	inode->i_fop = &admin_fops;
 	inode->i_op = &file_inode_operations;
 	inode->i_atime = inode->i_mtime = inode->i_ctime = current_time(inode);
+	inode->i_private = private;
 	inc_nlink(inode);
 	d_instantiate(dentry, inode);
 	d_add(dentry, inode);
