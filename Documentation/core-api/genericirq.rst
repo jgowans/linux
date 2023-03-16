@@ -240,7 +240,14 @@ which only need an EOI at the end of the handler.
 
 The following control flow is implemented (simplified excerpt)::
 
-    handle_irq_event(desc->action);
+    if (desc->status & running) {
+        desc->status |= pending;
+        return;
+    }
+    do {
+        desc->status &= ~pending;
+        handle_irq_event(desc->action);
+    } while (status & pending);
     desc->irq_data.chip->irq_eoi();
 
 

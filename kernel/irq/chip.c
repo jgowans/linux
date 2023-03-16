@@ -692,8 +692,10 @@ void handle_fasteoi_irq(struct irq_desc *desc)
 
 	raw_spin_lock(&desc->lock);
 
-	if (!irq_may_run(desc))
+	if (!irq_may_run(desc)) {
+		desc->istate |= IRQS_PENDING;
 		goto out;
+	}
 
 	desc->istate &= ~(IRQS_REPLAY | IRQS_WAITING);
 
@@ -711,7 +713,10 @@ void handle_fasteoi_irq(struct irq_desc *desc)
 	if (desc->istate & IRQS_ONESHOT)
 		mask_irq(desc);
 
-	handle_irq_event(desc);
+	do {
+		handle_irq_event(desc);
+	} while (unlikely((desc->istate & IRQS_PENDING) &&
+			!irqd_irq_disabled(&desc->irq_data)));
 
 	cond_unmask_eoi_irq(desc, chip);
 
