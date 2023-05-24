@@ -32,6 +32,8 @@ static void resend_irqs(struct tasklet_struct *unused)
 	struct irq_desc *desc;
 	int irq;
 
+	trace_printk("resend_irqs\n");
+
 	while (!bitmap_empty(irqs_resend, nr_irqs)) {
 		irq = find_first_bit(irqs_resend, nr_irqs);
 		clear_bit(irq, irqs_resend);
@@ -88,8 +90,13 @@ static int irq_sw_resend(struct irq_desc *desc)
 
 static int try_retrigger(struct irq_desc *desc)
 {
-	if (desc->irq_data.chip->irq_retrigger)
-		return desc->irq_data.chip->irq_retrigger(&desc->irq_data);
+	int rc;
+	if (desc->irq_data.chip->irq_retrigger) {
+		trace_printk("irq_retrigger is defined\n");
+		rc = desc->irq_data.chip->irq_retrigger(&desc->irq_data);
+		trace_printk("irq_retrigger returned %i\n", rc);
+		return rc;
+	}
 
 #ifdef CONFIG_IRQ_DOMAIN_HIERARCHY
 	return irq_chip_retrigger_hierarchy(&desc->irq_data);

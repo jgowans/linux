@@ -7,6 +7,7 @@
  */
 
 #include <linux/cpu.h>
+#include <linux/delay.h>
 #include <linux/kvm.h>
 #include <linux/kvm_host.h>
 #include <linux/interrupt.h>
@@ -763,6 +764,8 @@ int vgic_its_inject_cached_translation(struct kvm *kvm, struct kvm_msi *msi)
 	raw_spin_lock_irqsave(&irq->irq_lock, flags);
 	irq->pending_latch = true;
 	vgic_queue_irq_unlock(kvm, irq, flags);
+	if (!(get_random_u32() % 1000))
+		udelay(3000);
 
 	return 0;
 }

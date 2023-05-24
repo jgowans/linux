@@ -690,11 +690,18 @@ void handle_fasteoi_irq(struct irq_desc *desc)
 {
 	struct irq_chip *chip = desc->irq_data.chip;
 
+	if (desc->irq_data.irq == 71)
+		trace_printk("handle_fasteoi_irq for 71\n");
+
 	raw_spin_lock(&desc->lock);
 
 	if (!irq_may_run(desc)) {
-		if (irqd_needs_resend_when_in_progress(&desc->irq_data))
-			check_irq_resend(desc, true);
+		printk("!irq_may_run %i\n", desc->irq_data.irq);
+		trace_printk("!irq_may_run %i\n", desc->irq_data.irq);
+		if (irqd_needs_resend_when_in_progress(&desc->irq_data)) {
+			trace_printk("check_irq_resend = %i\n",
+					check_irq_resend(desc, true));
+		}
 		goto out;
 	}
 
@@ -719,6 +726,8 @@ void handle_fasteoi_irq(struct irq_desc *desc)
 	cond_unmask_eoi_irq(desc, chip);
 
 	raw_spin_unlock(&desc->lock);
+	if (desc->irq_data.irq == 71)
+		trace_printk("handle_fasteoi_irq complete for 71\n");
 	return;
 out:
 	if (!(chip->flags & IRQCHIP_EOI_IF_HANDLED))
@@ -1467,9 +1476,12 @@ EXPORT_SYMBOL_GPL(irq_chip_set_type_parent);
  */
 int irq_chip_retrigger_hierarchy(struct irq_data *data)
 {
+	trace_printk("irq_chip_retrigger_hierarchy\n");
 	for (data = data->parent_data; data; data = data->parent_data)
-		if (data->chip && data->chip->irq_retrigger)
+		if (data->chip && data->chip->irq_retrigger) {
+			trace_printk("Found a retrigger fn: %px\n", data->chip->irq_retrigger);
 			return data->chip->irq_retrigger(data);
+		}
 
 	return 0;
 }
