@@ -692,8 +692,15 @@ void handle_fasteoi_irq(struct irq_desc *desc)
 
 	raw_spin_lock(&desc->lock);
 
-	if (!irq_may_run(desc))
+	/*
+	 * When an affinity change races with IRQ delivery, the next interrupt
+	 * can arrive on the new CPU before the original CPU has completed
+	 * handling the previous one. Mark it as pending and return EOI.
+	 */
+	if (!irq_may_run(desc)) {
+		desc->istate |= IRQS_PENDING;
 		goto out;
+	}
 
 	desc->istate &= ~(IRQS_REPLAY | IRQS_WAITING);
 
@@ -714,6 +721,13 @@ void handle_fasteoi_irq(struct irq_desc *desc)
 	handle_irq_event(desc);
 
 	cond_unmask_eoi_irq(desc, chip);
+
+	/*
+	 * This resends the IRQ from the original CPU when the race described
+	 * above !irq_may_run happens.
+	 */
+	if (unlikely(desc->istate & IRQS_PENDING))
+		check_irq_resend(desc, false);
 
 	raw_spin_unlock(&desc->lock);
 	return;
