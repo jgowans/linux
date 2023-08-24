@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 
+#include "pkernfs.h"
 #include <linux/dcache.h>
 #include <linux/fs.h>
 #include <linux/module.h>
@@ -14,6 +15,14 @@ static int pkernfs_fill_super(struct super_block *sb, struct fs_context *fc)
 {
 	struct inode *inode;
 	struct dentry *dentry;
+
+	struct pkernfs_sb *psb = (struct pkernfs_sb *) pkernfs_mem;
+	if (psb->magic_number == PKERNFS_MAGIC_NUMBER) {
+	    printk("pkernfs Restoring from super block\n");
+	} else {
+	    printk("pkernfs Clean super block; initialising\n");
+	    psb->magic_number = PKERNFS_MAGIC_NUMBER;
+	}
 
 	sb->s_op = &pkernfs_super_ops;
 
