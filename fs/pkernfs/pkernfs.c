@@ -8,7 +8,7 @@
 #include <linux/io.h>
 
 static phys_addr_t pkernfs_base, pkernfs_size;
-static void *pkernfs_mem;
+void *pkernfs_mem;
 static const struct super_operations pkernfs_super_ops = { };
 
 static int pkernfs_fill_super(struct super_block *sb, struct fs_context *fc)
@@ -24,22 +24,26 @@ static int pkernfs_fill_super(struct super_block *sb, struct fs_context *fc)
 		pr_info("pkernfs: Restoring from super block\n");
 	} else {
 		pr_info("pkernfs: Clean super block; initialising\n");
+		pkernfs_initialise_inode_store(sb);
+		pkernfs_zero_allocations(sb);
 		psb->magic_number = PKERNFS_MAGIC_NUMBER;
+		pkernfs_get_persisted_inode(sb, 1)->flags = PKERNFS_INODE_FLAG_DIR;
+		strscpy(pkernfs_get_persisted_inode(sb, 1)->filename, ".", PKERNFS_FILENAME_LEN);
+		psb->next_free_ino = 2;
 	}
 
 	sb->s_op = &pkernfs_super_ops;
 
-	inode = new_inode(sb);
+	inode = pkernfs_inode_get(sb, 1);
 	if (!inode)
 		return -ENOMEM;
 
-	inode->i_ino = 1;
 	inode->i_mode = S_IFDIR;
-	inode->i_op = &simple_dir_inode_operations;
-	inode->i_fop = &simple_dir_operations;
+	inode->i_fop = &pkernfs_dir_fops;
 	simple_inode_init_ts(inode);
 	/* directory inodes start off with i_nlink == 2 (for "." entry) */
 	inc_nlink(inode);
+	inode_init_owner(&nop_mnt_idmap, inode, NULL, inode->i_mode);
 
 	dentry = d_make_root(inode);
 	if (!dentry)
