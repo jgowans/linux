@@ -24,6 +24,8 @@ static int pkernfs_fill_super(struct super_block *sb, struct fs_context *fc)
 	    pkernfs_zero_inode_store(sb);
 	    pkernfs_zero_allocations(sb);
 	    psb->magic_number = PKERNFS_MAGIC_NUMBER;
+	    pkernfs_get_persisted_inode(sb, 0)->flags = PKERNFS_INODE_FLAG_DIR;
+	    strncpy(pkernfs_get_persisted_inode(sb, 0)->filename, "root-file", 32);
 	}
 
 	sb->s_op = &pkernfs_super_ops;

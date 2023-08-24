@@ -20,6 +20,7 @@ struct pkernfs_inode {
 
 void pkernfs_zero_inode_store(struct super_block *sb);
 void pkernfs_zero_allocations(struct super_block *sb);
- struct inode *pkernfs_inode_get(struct super_block *sb, unsigned long ino);
+struct inode *pkernfs_inode_get(struct super_block *sb, unsigned long ino);
+struct pkernfs_inode *pkernfs_get_persisted_inode(struct super_block *sb, int ino);
 
 extern const struct file_operations pkernfs_dir_fops;
