@@ -23,6 +23,8 @@ else
 obj-y +=	no-block.o
 endif
 
+obj-y += pkernfs/
+
 obj-$(CONFIG_PROC_FS) += proc_namespace.o
 
 obj-$(CONFIG_LEGACY_DIRECT_IO)	+= direct-io.o
