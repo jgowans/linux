@@ -4,7 +4,10 @@
 #include <linux/fs.h>
 #include <linux/module.h>
 #include <linux/fs_context.h>
+#include <linux/io.h>
 
+static phys_addr_t base, size;
+static void *pkernfs_mem;
 static const struct super_operations pkernfs_super_ops = { };
 
 static int pkernfs_fill_super(struct super_block *sb, struct fs_context *fc)
@@ -62,9 +65,27 @@ static int __init pkernfs_init(void)
 {
 	int ret;
 	ret = register_filesystem(&pkernfs_fs_type);
-	printk("pkernfs_init: %i\n", ret);
+	/* requires nopat */
+	pkernfs_mem = ioremap(base,size);
+	printk("pkernfs_init: %i ; vaddr: %px\n", ret, pkernfs_mem);
 	return ret;
 }
+
+/**
+ * Format: pkernfs=<size>:<base>
+ * Just like: memmap=nn[KMG]!ss[KMG]
+ */
+static int __init parse_pkernfs_extents(char *p)
+{
+        size = memparse(p, &p);
+	printk("pkernfs size: %llu\n", size);
+	p++; /* Skip over ! char */
+	base = memparse(p, &p);
+	printk("pkernfs base: %llu\n", base);
+	return 0;
+}
+
+early_param("pkernfs", parse_pkernfs_extents);
 
 MODULE_ALIAS_FS("pkernfs");
 module_init(pkernfs_init);
