@@ -4,3 +4,6 @@
 #
 
 obj-y += pkernfs.o
+obj-y += inode.o
+obj-y += allocator.o
+obj-y += dir.o

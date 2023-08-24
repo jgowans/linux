@@ -3,6 +3,8 @@
 #include "pkernfs.h"
 #include <linux/fs.h>
 
+const struct inode_operations pkernfs_dir_inode_operations;
+
 struct inode *pkernfs_inode_get(struct super_block *sb, unsigned long ino) {
 	struct inode *inode;
 	inode = iget_locked(sb, ino);
@@ -13,9 +15,13 @@ struct inode *pkernfs_inode_get(struct super_block *sb, unsigned long ino) {
 		return inode;
 	}
 	printk("New inode %lu\n", ino);
+	inode->i_op = &pkernfs_dir_inode_operations;
+	inode->i_sb = sb;
 	unlock_new_inode(inode);
 	return inode;
 }
+
+
 
 void pkernfs_zero_inode_store(struct super_block *sb)
 {

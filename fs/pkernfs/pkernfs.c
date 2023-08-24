@@ -8,7 +8,7 @@
 #include <linux/io.h>
 
 static phys_addr_t base, size;
-static void *pkernfs_mem;
+void *pkernfs_mem;
 static const struct super_operations pkernfs_super_ops = { };
 
 static int pkernfs_fill_super(struct super_block *sb, struct fs_context *fc)
@@ -21,22 +21,23 @@ static int pkernfs_fill_super(struct super_block *sb, struct fs_context *fc)
 	    printk("pkernfs Restoring from super block\n");
 	} else {
 	    printk("pkernfs Clean super block; initialising\n");
+	    pkernfs_zero_inode_store(sb);
+	    pkernfs_zero_allocations(sb);
 	    psb->magic_number = PKERNFS_MAGIC_NUMBER;
 	}
 
 	sb->s_op = &pkernfs_super_ops;
 
-	inode = new_inode(sb);
+	inode = pkernfs_inode_get(sb, 0);
 	if (!inode)
 		return -ENOMEM;
 
-	inode->i_ino = get_next_ino();
 	inode->i_mode = S_IFDIR;
-	inode->i_op = &simple_dir_inode_operations;
-	inode->i_fop = &simple_dir_operations;
+	inode->i_fop = &pkernfs_dir_fops;
 	inode->i_atime = inode->i_mtime = inode->i_ctime = current_time(inode);
 	/* directory inodes start off with i_nlink == 2 (for "." entry) */
 	inc_nlink(inode);
+	inode_init_owner(&nop_mnt_idmap, inode, NULL, inode->i_mode);
 
 	dentry = d_make_root(inode);
 	if (!dentry)
