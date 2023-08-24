@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+config PKERNFS_FS
+	bool "Persistent Kernel filesystem (pkernfs)"
+	help
+	  An in-memory filesystem on top of reserved memory specified via
+	  pkernfs= cmdline argument.  Used for storing kernel state and
+	  userspace memory which is preserved across kexec to support
+	  live update.
