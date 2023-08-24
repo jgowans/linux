@@ -18,6 +18,7 @@
 #include <linux/mm.h>
 #include <linux/swap.h>
 #include <linux/smp.h>
+#include <linux/guestmemfs.h>
 #include <linux/init.h>
 #include <linux/initrd.h>
 #include <linux/kexec.h>
@@ -1337,6 +1338,7 @@ failed:
 
 void __init mem_init(void)
 {
+	guestmemfs_reserve_mem();
 	pci_iommu_alloc();
 
 	/* clear_bss() already clear the empty_zero_page */

@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+config GUESTMEMFS_FS
+	bool "Persistent Guest memory filesystem (guestmemfs)"
+	help
+	  An in-memory filesystem on top of reserved memory specified via
+	  guestmemfs= cmdline argument.  Used for storing kernel state and
+	  userspace memory which is preserved across kexec to support
+	  live update of a hypervisor when running guest virtual machines.
+	  Select this if you need the ability to persist memory for guest VMs
+	  across kexec to do live update.
