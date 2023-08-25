@@ -78,6 +78,8 @@ static int pkernfs_create(struct mnt_idmap *id,
 	pkernfs_inode = pkernfs_get_persisted_inode(dir->i_sb, free_inode);
 	strncpy(pkernfs_inode->filename, dentry->d_name.name, 32);
 	pkernfs_inode->flags = PKERNFS_INODE_FLAG_FILE;
+	pkernfs_inode->mappings_block = pkernfs_alloc_block(vfs_inode->i_sb);
+	memset(pkernfs_addr_for_block(dir->i_sb, pkernfs_inode->mappings_block), 0, (2 << 20));
 	return 0;
 }
 

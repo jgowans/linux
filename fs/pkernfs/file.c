@@ -4,8 +4,19 @@
 
 static int truncate(struct inode *inode, loff_t newsize)
 {
+	unsigned long free_block;
+	struct pkernfs_inode *pkernfs_inode;
 	printk("pkernfs_truncate invoked with size %llu\n", newsize);
+	pkernfs_inode = pkernfs_get_persisted_inode(inode->i_sb, inode->i_ino);
 	i_size_write(inode, newsize);
+	for (int block_idx = 0; (block_idx * (2 << 20)) < newsize; ++block_idx) {
+		printk("allocating block %i\n", block_idx);
+		free_block = pkernfs_alloc_block(inode->i_sb);
+		printk("free block: %lu\n", free_block);
+		*((unsigned long *)pkernfs_addr_for_block(inode->i_sb, pkernfs_inode->mappings_block)
+			+ block_idx) = free_block;
+		++pkernfs_inode->num_mappings;
+	}
 	return 0;
 }
 
