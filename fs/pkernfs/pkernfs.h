@@ -6,6 +6,8 @@
 #define PKERNFS_FILENAME_LEN 255
 
 extern void *pkernfs_mem;
+/* Units of bytes */
+extern phys_addr_t pkernfs_base, pkernfs_size;
 
 struct pkernfs_sb {
 	unsigned long magic_number;

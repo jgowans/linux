@@ -7,7 +7,7 @@
 #include <linux/fs_context.h>
 #include <linux/io.h>
 
-static phys_addr_t pkernfs_base, pkernfs_size;
+phys_addr_t pkernfs_base, pkernfs_size;
 void *pkernfs_mem;
 static const struct super_operations pkernfs_super_ops = { };
 
