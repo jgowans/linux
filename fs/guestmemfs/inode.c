@@ -15,14 +15,28 @@ struct guestmemfs_inode *guestmemfs_get_persisted_inode(struct super_block *sb, 
 
 struct inode *guestmemfs_inode_get(struct super_block *sb, unsigned long ino)
 {
+	struct guestmemfs_inode *guestmemfs_inode;
 	struct inode *inode = iget_locked(sb, ino);
 
 	/* If this inode is cached it is already populated; just return */
 	if (!(inode->i_state & I_NEW))
 		return inode;
-	inode->i_op = &guestmemfs_dir_inode_operations;
+	guestmemfs_inode = guestmemfs_get_persisted_inode(sb, ino);
 	inode->i_sb = sb;
-	inode->i_mode = S_IFREG;
+
+	if (guestmemfs_inode->flags & GUESTMEMFS_INODE_FLAG_DIR) {
+		inode->i_op = &guestmemfs_dir_inode_operations;
+		inode->i_mode = S_IFDIR;
+	} else {
+		inode->i_op = &guestmemfs_file_inode_operations;
+		inode->i_mode = S_IFREG;
+		inode->i_fop = &guestmemfs_file_fops;
+		inode->i_size = guestmemfs_inode->num_mappings * PMD_SIZE;
+	}
+
+	set_nlink(inode, 1);
+
+	/* Switch based on file type */
 	unlock_new_inode(inode);
 	return inode;
 }
@@ -103,6 +117,7 @@ static struct dentry *guestmemfs_lookup(struct inode *dir,
 		unsigned int flags)
 {
 	struct guestmemfs_inode *guestmemfs_inode;
+	struct inode *vfs_inode;
 	unsigned long ino;
 
 	guestmemfs_inode = guestmemfs_get_persisted_inode(dir->i_sb, dir->i_ino);
@@ -112,7 +127,10 @@ static struct dentry *guestmemfs_lookup(struct inode *dir,
 		if (!strncmp(guestmemfs_inode->filename,
 			     dentry->d_name.name,
 			     GUESTMEMFS_FILENAME_LEN)) {
-			d_add(dentry, guestmemfs_inode_get(dir->i_sb, ino));
+			vfs_inode = guestmemfs_inode_get(dir->i_sb, ino);
+			mark_inode_dirty(dir);
+			inode_update_timestamps(vfs_inode, S_ATIME);
+			d_add(dentry, vfs_inode);
 			break;
 		}
 		ino = guestmemfs_inode->sibling_ino;
@@ -162,3 +180,4 @@ const struct inode_operations guestmemfs_dir_inode_operations = {
 	.lookup		= guestmemfs_lookup,
 	.unlink		= guestmemfs_unlink,
 };
+

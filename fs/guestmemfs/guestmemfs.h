@@ -44,3 +44,5 @@ struct inode *guestmemfs_inode_get(struct super_block *sb, unsigned long ino);
 struct guestmemfs_inode *guestmemfs_get_persisted_inode(struct super_block *sb, int ino);
 
 extern const struct file_operations guestmemfs_dir_fops;
+extern const struct file_operations guestmemfs_file_fops;
+extern const struct inode_operations guestmemfs_file_inode_operations;
