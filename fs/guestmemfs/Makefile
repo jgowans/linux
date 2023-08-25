@@ -3,4 +3,4 @@
 # Makefile for persistent kernel filesystem
 #
 
-obj-y += guestmemfs.o inode.o dir.o allocator.o
+obj-y += guestmemfs.o inode.o dir.o allocator.o file.o
