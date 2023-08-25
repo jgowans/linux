@@ -34,8 +34,15 @@ struct pkernfs_inode {
 };
 
 void pkernfs_initialise_inode_store(struct super_block *sb);
+
 void pkernfs_zero_allocations(struct super_block *sb);
+unsigned long pkernfs_alloc_block(struct super_block *sb);
 struct inode *pkernfs_inode_get(struct super_block *sb, unsigned long ino);
+void *pkernfs_addr_for_block(struct super_block *sb, int block_idx);
+
 struct pkernfs_inode *pkernfs_get_persisted_inode(struct super_block *sb, int ino);
 
+
 extern const struct file_operations pkernfs_dir_fops;
+extern const struct file_operations pkernfs_file_fops;
+extern const struct inode_operations pkernfs_file_inode_operations;

@@ -15,14 +15,26 @@ struct pkernfs_inode *pkernfs_get_persisted_inode(struct super_block *sb, int in
 
 struct inode *pkernfs_inode_get(struct super_block *sb, unsigned long ino)
 {
+	struct pkernfs_inode *pkernfs_inode;
 	struct inode *inode = iget_locked(sb, ino);
 
 	/* If this inode is cached it is already populated; just return */
 	if (!(inode->i_state & I_NEW))
 		return inode;
-	inode->i_op = &pkernfs_dir_inode_operations;
+	pkernfs_inode = pkernfs_get_persisted_inode(sb, ino);
 	inode->i_sb = sb;
-	inode->i_mode = S_IFREG;
+	if (pkernfs_inode->flags & PKERNFS_INODE_FLAG_DIR) {
+		inode->i_op = &pkernfs_dir_inode_operations;
+		inode->i_mode = S_IFDIR;
+	} else {
+		inode->i_op = &pkernfs_file_inode_operations;
+		inode->i_mode = S_IFREG;
+		inode->i_fop = &pkernfs_file_fops;
+	}
+
+	set_nlink(inode, 1);
+
+	/* Switch based on file type */
 	unlock_new_inode(inode);
 	return inode;
 }
@@ -79,6 +91,8 @@ static int pkernfs_create(struct mnt_idmap *id, struct inode *dir,
 	pkernfs_get_persisted_inode(dir->i_sb, dir->i_ino)->child_ino = free_inode;
 	strscpy(pkernfs_inode->filename, dentry->d_name.name, PKERNFS_FILENAME_LEN);
 	pkernfs_inode->flags = PKERNFS_INODE_FLAG_FILE;
+	pkernfs_inode->mappings_block = pkernfs_alloc_block(dir->i_sb);
+	memset(pkernfs_addr_for_block(dir->i_sb, pkernfs_inode->mappings_block), 0, (2 << 20));
 
 	vfs_inode = pkernfs_inode_get(dir->i_sb, free_inode);
 	d_instantiate(dentry, vfs_inode);
@@ -90,6 +104,7 @@ static struct dentry *pkernfs_lookup(struct inode *dir,
 		unsigned int flags)
 {
 	struct pkernfs_inode *pkernfs_inode;
+	struct inode *vfs_inode;
 	unsigned long ino;
 
 	pkernfs_inode = pkernfs_get_persisted_inode(dir->i_sb, dir->i_ino);
@@ -97,7 +112,10 @@ static struct dentry *pkernfs_lookup(struct inode *dir,
 	while (ino) {
 		pkernfs_inode = pkernfs_get_persisted_inode(dir->i_sb, ino);
 		if (!strncmp(pkernfs_inode->filename, dentry->d_name.name, PKERNFS_FILENAME_LEN)) {
-			d_add(dentry, pkernfs_inode_get(dir->i_sb, ino));
+			vfs_inode = pkernfs_inode_get(dir->i_sb, ino);
+			mark_inode_dirty(dir);
+			inode_update_timestamps(vfs_inode, S_ATIME);
+			d_add(dentry, vfs_inode);
 			break;
 		}
 		ino = pkernfs_inode->sibling_ino;
@@ -146,3 +164,4 @@ const struct inode_operations pkernfs_dir_inode_operations = {
 	.lookup		= pkernfs_lookup,
 	.unlink		= pkernfs_unlink,
 };
+
