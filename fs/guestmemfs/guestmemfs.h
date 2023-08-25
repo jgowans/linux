@@ -8,6 +8,9 @@
 #define GUESTMEMFS_FILENAME_LEN 255
 #define GUESTMEMFS_PSB(sb) ((struct guestmemfs_sb *)sb->s_fs_info)
 
+/* Units of bytes */
+extern phys_addr_t guestmemfs_base, guestmemfs_size;
+
 struct guestmemfs_sb {
 	/* Inode number */
 	unsigned long next_free_ino;
