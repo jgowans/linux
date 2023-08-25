@@ -24,3 +24,5 @@ struct inode *pkernfs_inode_get(struct super_block *sb, unsigned long ino);
 struct pkernfs_inode *pkernfs_get_persisted_inode(struct super_block *sb, int ino);
 
 extern const struct file_operations pkernfs_dir_fops;
+extern const struct file_operations pkernfs_file_fops;
+extern const struct inode_operations pkernfs_file_inode_operations;
