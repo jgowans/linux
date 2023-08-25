@@ -7,7 +7,7 @@
 #include <linux/fs_context.h>
 #include <linux/io.h>
 
-static phys_addr_t base, size;
+phys_addr_t pkernfs_base, pkernfs_size;
 void *pkernfs_mem;
 static const struct super_operations pkernfs_super_ops = { };
 
@@ -78,7 +78,7 @@ static int __init pkernfs_init(void)
 	int ret;
 	ret = register_filesystem(&pkernfs_fs_type);
 	/* requires nopat */
-	pkernfs_mem = ioremap(base,size);
+	pkernfs_mem = ioremap(pkernfs_base, pkernfs_size);
 	printk("pkernfs_init: %i ; vaddr: %px\n", ret, pkernfs_mem);
 	return ret;
 }
@@ -89,11 +89,11 @@ static int __init pkernfs_init(void)
  */
 static int __init parse_pkernfs_extents(char *p)
 {
-        size = memparse(p, &p);
-	printk("pkernfs size: %llu\n", size);
+        pkernfs_size = memparse(p, &p);
+	printk("pkernfs size: %llu\n", pkernfs_size);
 	p++; /* Skip over ! char */
-	base = memparse(p, &p);
-	printk("pkernfs base: %llu\n", base);
+	pkernfs_base = memparse(p, &p);
+	printk("pkernfs base: %llu\n", pkernfs_base);
 	return 0;
 }
 

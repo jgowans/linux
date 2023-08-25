@@ -3,6 +3,8 @@
 #include <linux/fs.h>
 
 extern void *pkernfs_mem;
+/* Units of bytes */
+extern phys_addr_t pkernfs_base, pkernfs_size;
 #define PKERNFS_MAGIC_NUMBER 0x6345789
 struct pkernfs_sb {
 	unsigned long magic_number;
