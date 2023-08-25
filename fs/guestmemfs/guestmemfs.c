@@ -9,7 +9,7 @@
 #include <linux/memblock.h>
 #include <linux/statfs.h>
 
-static phys_addr_t guestmemfs_base, guestmemfs_size;
+phys_addr_t guestmemfs_base, guestmemfs_size;
 struct guestmemfs_sb *psb;
 
 static int statfs(struct dentry *root, struct kstatfs *buf)
