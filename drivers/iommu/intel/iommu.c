@@ -1575,6 +1575,7 @@ int domain_attach_iommu(struct dmar_domain *domain, struct intel_iommu *iommu)
 		goto err_clear;
 	}
 	domain_update_iommu_cap(domain);
+	list_add(&domain->domains, &iommu->domains);
 
 	spin_unlock(&iommu->lock);
 	return 0;
@@ -3185,6 +3186,33 @@ static void intel_disable_iommus(void)
 		iommu_disable_translation(iommu);
 }
 
+static void zap_context_table_entries(struct intel_iommu *iommu)
+{
+	struct context_entry *context;
+	struct dmar_domain *domain;
+	struct device_domain_info *device;
+	int bus, devfn;
+	u16 did_old;
+
+	list_for_each_entry(domain, &iommu->domains, domains) {
+		list_for_each_entry(device, &domain->devices, link) {
+			context = iommu_context_addr(iommu, device->bus, device->devfn, 0);
+			if (!context || !context_present(context))
+				continue;
+			context_domain_id(context);
+			context_clear_entry(context);
+			__iommu_flush_cache(iommu, context, sizeof(*context));
+			iommu->flush.flush_context(iommu,
+						   did_old,
+						   (((u16)bus) << 8) | devfn,
+						   DMA_CCMD_MASK_NOBIT,
+						   DMA_CCMD_DEVICE_INVL);
+			iommu->flush.flush_iotlb(iommu,	did_old, 0, 0,
+						 DMA_TLB_DSI_FLUSH);
+		}
+	}
+}
+
 void intel_iommu_shutdown(void)
 {
 	struct dmar_drhd_unit *drhd;
@@ -3197,10 +3225,8 @@ void intel_iommu_shutdown(void)
 
 	/* Disable PMRs explicitly here. */
 	for_each_iommu(iommu, drhd)
-		iommu_disable_protect_mem_regions(iommu);
-
-	/* Make sure the IOMMUs are switched off */
-	intel_disable_iommus();
+		zap_context_table_entries(iommu);
+	return
 
 	up_write(&dmar_global_lock);
 }

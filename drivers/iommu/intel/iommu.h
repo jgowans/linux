@@ -606,6 +606,7 @@ struct dmar_domain {
 	spinlock_t lock;		/* Protect device tracking lists */
 	struct list_head devices;	/* all devices' list */
 	struct list_head dev_pasids;	/* all attached pasids */
+	struct list_head domains;	/* all struct dmar_domains on this IOMMU */
 
 	spinlock_t cache_lock;		/* Protect the cache tag list */
 	struct list_head cache_tags;	/* Cache tag list */
@@ -749,6 +750,7 @@ struct intel_iommu {
 	void *perf_statistic;
 
 	struct iommu_pmu *pmu;
+	struct list_head domains;	/* all struct dmar_domains on this IOMMU */
 };
 
 /* PCI domain-device relationship */
