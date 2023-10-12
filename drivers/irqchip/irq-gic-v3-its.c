@@ -29,6 +29,7 @@
 #include <linux/percpu.h>
 #include <linux/slab.h>
 #include <linux/syscore_ops.h>
+#include <linux/workqueue.h>
 
 #include <linux/irqchip.h>
 #include <linux/irqchip/arm-gic-v3.h>
@@ -49,6 +50,7 @@
 #define RD_LOCAL_MEMRESERVE_DONE                BIT(2)
 
 static u32 lpi_id_bits;
+static u32 lpi_id_base __initdata = 8192;
 
 /*
  * We allocate memory for PROPBASE to cover 2 ^ lpi_id_bits LPIs to
@@ -2140,7 +2142,7 @@ static int free_lpi_range(u32 base, u32 nr_lpis)
 
 static int __init its_lpi_init(u32 id_bits)
 {
-	u32 lpis = (1UL << id_bits) - 8192;
+	u32 lpis = (1UL << id_bits) - lpi_id_base;
 	u32 numlpis;
 	int err;
 
@@ -2156,7 +2158,7 @@ static int __init its_lpi_init(u32 id_bits)
 	 * Initializing the allocator is just the same as freeing the
 	 * full range of LPIs.
 	 */
-	err = free_lpi_range(8192, lpis);
+	err = free_lpi_range(lpi_id_base, lpis);
 	pr_debug("ITS: Allocator initialized for %u LPIs\n", lpis);
 	return err;
 }
@@ -4772,6 +4774,59 @@ static bool __maybe_unused its_enable_rk3588001(void *data)
 	return true;
 }
 
+#define ITS_QUIRK_GIC700_2195890_PERIOD_MSEC 1000
+static struct {
+	u32 lpi;
+	struct delayed_work work;
+} its_quirk_gic700_2195890_data __maybe_unused;
+
+static void __maybe_unused its_quirk_gic700_2195890_work_handler(struct work_struct *work)
+{
+	int cpu;
+	void __iomem *rdbase;
+	u64 gicr_invlpir_val;
+
+	for_each_online_cpu(cpu) {
+		rdbase = gic_data_rdist_cpu(cpu)->rd_base;
+		if (!rdbase) {
+			continue;
+		}
+
+		/*
+		 * Prod the respective GIC with an INV for an otherwise unused
+		 * LPI.  This is only to resume the stalled processing, so
+		 * there's no need to wait for invalidation to complete.
+		 */
+		gicr_invlpir_val =
+			FIELD_PREP(GICR_INVLPIR_INTID,
+				   its_quirk_gic700_2195890_data.lpi);
+		raw_spin_lock(&gic_data_rdist_cpu(cpu)->rd_lock);
+		gic_write_lpir(gicr_invlpir_val, rdbase + GICR_INVLPIR);
+		raw_spin_unlock(&gic_data_rdist_cpu(cpu)->rd_lock);
+	}
+
+	schedule_delayed_work(&its_quirk_gic700_2195890_data.work,
+		msecs_to_jiffies(ITS_QUIRK_GIC700_2195890_PERIOD_MSEC));
+}
+
+static bool __maybe_unused __init its_enable_quirk_gic700_2195890(void *data)
+{
+	if (its_quirk_gic700_2195890_data.lpi)
+		return true;
+
+	/*
+	 * Use one LPI INTID from the start of the LPI range for GIC prodding,
+	 * and make it unavailable for regular LPI use later.
+	 */
+	its_quirk_gic700_2195890_data.lpi = lpi_id_base++;
+
+	INIT_DELAYED_WORK(&its_quirk_gic700_2195890_data.work,
+			  its_quirk_gic700_2195890_work_handler);
+	schedule_delayed_work(&its_quirk_gic700_2195890_data.work, 0);
+
+	return true;
+}
+
 static bool its_set_non_coherent(void *data)
 {
 	struct its_node *its = data;
@@ -4839,6 +4894,17 @@ static const struct gic_quirk its_quirks[] = {
 		.property = "dma-noncoherent",
 		.init   = its_set_non_coherent,
 	},
+#ifdef CONFIG_ARM64_ERRATUM_2195890
+	{
+		.desc	= "ITS: GIC-700 erratum 2195890",
+		/*
+		 * Applies to r0p0, r0p1, r1p0: iidr_var(bits 16..19) == 0 or 1
+		 */
+		//.iidr	= 0x0400043b,
+		//.mask	= 0xfffeffff,
+		.init	= its_enable_quirk_gic700_2195890,
+	},
+#endif
 	{
 	}
 };
