@@ -248,7 +248,75 @@ static inline struct file *kvm_gmem_get_file(struct kvm_memory_slot *slot)
 	return get_file_active(&slot->gmem.file);
 }
 
+#ifdef CONFIG_KVM_GENERIC_PRIVATE_MEM_MAPPABLE
+static bool kvm_gmem_isfaultable(struct vm_fault *vmf)
+{
+	struct vm_area_struct *vma = vmf->vma;
+	struct kvm_gmem *gmem = vma->vm_file->private_data;
+	pgoff_t pgoff = vmf->pgoff;
+	struct kvm_memory_slot *slot;
+	struct kvm *kvm = gmem->kvm;
+	unsigned long index;
+
+	xa_for_each_range(&gmem->bindings, index, slot, pgoff, pgoff) {
+		pgoff_t base_gfn = slot->base_gfn;
+		pgoff_t gfn_pgoff = slot->gmem.pgoff;
+		pgoff_t gfn = base_gfn + max(gfn_pgoff, pgoff) - gfn_pgoff;
+
+		if (!kvm_gmem_is_mappable(kvm, gfn))
+			return false;
+	}
+
+	return true;
+}
+
+static vm_fault_t kvm_gmem_fault(struct vm_fault *vmf)
+{
+	struct folio *folio;
+
+	folio = kvm_gmem_get_folio(file_inode(vmf->vma->vm_file), vmf->pgoff);
+	if (!folio)
+		return VM_FAULT_SIGBUS;
+
+	/*
+	 * Check if the page is allowed to be faulted to the host, with the
+	 * folio lock held to ensure that the check and incrementing the page
+	 * count are protected by the same folio lock.
+	 */
+	if (!kvm_gmem_isfaultable(vmf)) {
+		folio_unlock(folio);
+		return VM_FAULT_SIGBUS;
+	}
+
+	vmf->page = folio_file_page(folio, vmf->pgoff);
+
+	return VM_FAULT_LOCKED;
+}
+
+static const struct vm_operations_struct kvm_gmem_vm_ops = {
+	.fault = kvm_gmem_fault,
+};
+
+static int kvm_gmem_mmap(struct file *file, struct vm_area_struct *vma)
+{
+	/* No support for private mappings to avoid COW.  */
+	if ((vma->vm_flags & (VM_SHARED | VM_MAYSHARE)) !=
+	    (VM_SHARED | VM_MAYSHARE)) {
+		return -EINVAL;
+	}
+
+	file_accessed(file);
+	vm_flags_set(vma, VM_DONTDUMP);
+	vma->vm_ops = &kvm_gmem_vm_ops;
+
+	return 0;
+}
+#else
+#define kvm_gmem_mmap NULL
+#endif /* CONFIG_KVM_GENERIC_PRIVATE_MEM_MAPPABLE */
+
 static struct file_operations kvm_gmem_fops = {
+	.mmap		= kvm_gmem_mmap,
 	.open		= generic_file_open,
 	.release	= kvm_gmem_release,
 	.fallocate	= kvm_gmem_fallocate,

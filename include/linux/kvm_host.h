@@ -2459,4 +2459,17 @@ static inline int kvm_gmem_get_pfn_locked(struct kvm *kvm,
 }
 #endif /* CONFIG_KVM_PRIVATE_MEM */
 
+#ifdef CONFIG_KVM_GENERIC_PRIVATE_MEM_MAPPABLE
+static inline bool kvm_gmem_is_mappable(struct kvm *kvm, gfn_t gfn)
+{
+	return !(kvm_get_memory_attributes(kvm, gfn) &
+		 KVM_MEMORY_ATTRIBUTE_NOT_MAPPABLE);
+}
+#else
+static inline bool kvm_gmem_is_mappable(struct kvm *kvm, gfn_t gfn)
+{
+	return false;
+}
+#endif /* CONFIG_KVM_GENERIC_PRIVATE_MEM_MAPPABLE */
+
 #endif
