@@ -2520,6 +2520,48 @@ static __always_inline void kvm_handle_gfn_range(struct kvm *kvm,
 		KVM_MMU_UNLOCK(kvm);
 }
 
+#ifdef CONFIG_KVM_GENERIC_PRIVATE_MEM_MAPPABLE
+bool kvm_is_gmem_mapped(struct kvm *kvm, gfn_t gfn_start, gfn_t gfn_end)
+{
+	struct kvm_memslot_iter iter;
+
+	kvm_for_each_memslot_in_gfn_range(&iter, kvm_memslots(kvm), gfn_start, gfn_end) {
+		struct kvm_memory_slot *memslot = iter.slot;
+		gfn_t start, end, i;
+
+		start = max(gfn_start, memslot->base_gfn);
+		end = min(gfn_end, memslot->base_gfn + memslot->npages);
+		if (WARN_ON_ONCE(start >= end))
+			continue;
+
+		for (i = start; i < end; i++) {
+			struct page *page;
+			bool is_mapped;
+			kvm_pfn_t pfn;
+			int ret;
+
+			/*
+			 * Check the page_mapcount with the page lock held to
+			 * avoid racing with kvm_gmem_fault().
+			 */
+			ret = kvm_gmem_get_pfn_locked(kvm, memslot, i, &pfn, NULL);
+			if (WARN_ON_ONCE(ret))
+				continue;
+
+			page = pfn_to_page(pfn);
+			is_mapped = page_mapcount(page);
+			unlock_page(page);
+			put_page(page);
+
+			if (is_mapped)
+				return true;
+		}
+	}
+
+	return false;
+}
+#endif /* CONFIG_KVM_GENERIC_PRIVATE_MEM_MAPPABLE */
+
 static bool kvm_pre_set_memory_attributes(struct kvm *kvm,
 					  struct kvm_gfn_range *range)
 {
@@ -2568,6 +2610,15 @@ static int __kvm_vm_set_mem_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
 	/* Nothing to do if the entire range as the desired attributes. */
 	if (kvm_range_has_memory_attributes(kvm, start, end, attributes))
 		goto out_unlock;
+
+	if (IS_ENABLED(CONFIG_KVM_GENERIC_PRIVATE_MEM_MAPPABLE) && userspace) {
+		/* Host-mapped memory cannot be private. */
+		if ((attributes & KVM_MEMORY_ATTRIBUTE_PRIVATE) &&
+		    kvm_is_gmem_mapped(kvm, start, end)) {
+			r = -EPERM;
+			goto out_unlock;
+		}
+	}
 
 	/*
 	 * Reserve memory ahead of time to avoid having to deal with failures

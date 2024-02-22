@@ -2465,8 +2465,15 @@ static inline bool kvm_gmem_is_mappable(struct kvm *kvm, gfn_t gfn)
 	return !(kvm_get_memory_attributes(kvm, gfn) &
 		 KVM_MEMORY_ATTRIBUTE_NOT_MAPPABLE);
 }
+
+bool kvm_is_gmem_mapped(struct kvm *kvm, gfn_t gfn_start, gfn_t gfn_end);
 #else
 static inline bool kvm_gmem_is_mappable(struct kvm *kvm, gfn_t gfn)
+{
+	return false;
+}
+
+static inline bool kvm_is_gmem_mapped(struct kvm *kvm, gfn_t gfn_start, gfn_t gfn_end)
 {
 	return false;
 }
