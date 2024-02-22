@@ -1540,6 +1540,9 @@ struct kvm_memory_attributes {
 
 #define KVM_MEMORY_ATTRIBUTE_PRIVATE           (1ULL << 3)
 
+#define KVM_MEMORY_ATTRIBUTES_KERNEL_SHIFT     (16)
+#define KVM_MEMORY_ATTRIBUTES_KERNEL_MASK      GENMASK(63, KVM_MEMORY_ATTRIBUTES_KERNEL_SHIFT)
+
 #define KVM_CREATE_GUEST_MEMFD	_IOWR(KVMIO,  0xd4, struct kvm_create_guest_memfd)
 
 struct kvm_create_guest_memfd {

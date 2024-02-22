@@ -2540,8 +2540,8 @@ static bool kvm_pre_set_memory_attributes(struct kvm *kvm,
 }
 
 /* Set @attributes for the gfn range [@start, @end). */
-static int kvm_vm_set_mem_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
-				     unsigned long attributes)
+static int __kvm_vm_set_mem_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
+				      unsigned long attributes, bool userspace)
 {
 	struct kvm_mmu_notifier_range pre_set_range = {
 		.start = start,
@@ -2563,8 +2563,6 @@ static int kvm_vm_set_mem_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
 	void *entry;
 	int r = 0;
 
-	entry = attributes ? xa_mk_value(attributes) : NULL;
-
 	mutex_lock(&kvm->slots_lock);
 
 	/* Nothing to do if the entire range as the desired attributes. */
@@ -2584,6 +2582,17 @@ static int kvm_vm_set_mem_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
 	kvm_handle_gfn_range(kvm, &pre_set_range);
 
 	for (i = start; i < end; i++) {
+		/* Maintain kernel/userspace attributes separately. */
+		unsigned long attr = xa_to_value(xa_load(&kvm->mem_attr_array, i));
+
+		if (userspace)
+			attr &= KVM_MEMORY_ATTRIBUTES_KERNEL_MASK;
+		else
+			attr &= ~KVM_MEMORY_ATTRIBUTES_KERNEL_MASK;
+
+		attributes |= attr;
+		entry = attributes ? xa_mk_value(attributes) : NULL;
+
 		r = xa_err(xa_store(&kvm->mem_attr_array, i, entry,
 				    GFP_KERNEL_ACCOUNT));
 		KVM_BUG_ON(r, kvm);
@@ -2596,6 +2605,23 @@ out_unlock:
 
 	return r;
 }
+
+int kvm_vm_set_mem_attributes_kernel(struct kvm *kvm, gfn_t start, gfn_t end,
+				     unsigned long attributes)
+{
+	attributes &= KVM_MEMORY_ATTRIBUTES_KERNEL_MASK;
+
+	return __kvm_vm_set_mem_attributes(kvm, start, end, attributes, false);
+}
+
+static int kvm_vm_set_mem_attributes_userspace(struct kvm *kvm, gfn_t start, gfn_t end,
+					       unsigned long attributes)
+{
+	attributes &= ~KVM_MEMORY_ATTRIBUTES_KERNEL_MASK;
+
+	return __kvm_vm_set_mem_attributes(kvm, start, end, attributes, true);
+}
+
 static int kvm_vm_ioctl_set_mem_attributes(struct kvm *kvm,
 					   struct kvm_memory_attributes *attrs)
 {
@@ -2621,7 +2647,7 @@ static int kvm_vm_ioctl_set_mem_attributes(struct kvm *kvm,
 	 */
 	BUILD_BUG_ON(sizeof(attrs->attributes) != sizeof(unsigned long));
 
-	return kvm_vm_set_mem_attributes(kvm, start, end, attrs->attributes);
+	return kvm_vm_set_mem_attributes_userspace(kvm, start, end, attrs->attributes);
 }
 #endif /* CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES */
 

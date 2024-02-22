@@ -1458,6 +1458,9 @@ vm_fault_t kvm_arch_vcpu_fault(struct kvm_vcpu *vcpu, struct vm_fault *vmf);
 
 int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext);
 
+int kvm_vm_set_mem_attributes_kernel(struct kvm *kvm, gfn_t start, gfn_t end,
+				     unsigned long attributes);
+
 void kvm_arch_mmu_enable_log_dirty_pt_masked(struct kvm *kvm,
 					struct kvm_memory_slot *slot,
 					gfn_t gfn_offset,
