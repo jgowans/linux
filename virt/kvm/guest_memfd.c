@@ -595,7 +595,6 @@ out_unlock:
 		folio_unlock(folio);
 out_fput:
 	fput(file);
-
 	return r;
 }
 EXPORT_SYMBOL_GPL(kvm_gmem_get_pfn_locked);
@@ -603,13 +602,24 @@ EXPORT_SYMBOL_GPL(kvm_gmem_get_pfn_locked);
 int kvm_gmem_get_pfn(struct kvm *kvm, struct kvm_memory_slot *slot,
 		     gfn_t gfn, kvm_pfn_t *pfn, int *max_order)
 {
+	pgoff_t index = gfn - slot->base_gfn + slot->gmem.pgoff;
+	struct file *file;
 	int r;
 
-	r = kvm_gmem_get_pfn_locked(kvm, slot, gfn, pfn, max_order);
-	if (r)
-		return r;
+	file = kvm_gmem_get_file(slot);
+	if (!file)
+		return -EFAULT;
 
-	unlock_page(pfn_to_page(*pfn));
-	return 0;
+	if (file->f_op == &kvm_gmem_fops) {
+		r = kvm_gmem_get_pfn_locked(kvm, slot, index, pfn, max_order);
+		if (r)
+			goto out;
+		unlock_page(pfn_to_page(*pfn));
+	}
+
+out:
+	fput(file);
+
+	return r;
 }
 EXPORT_SYMBOL_GPL(kvm_gmem_get_pfn);
