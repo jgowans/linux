@@ -3,6 +3,11 @@
 #include "pkernfs.h"
 #include <linux/mm.h>
 
+bool is_pkernfs_file(struct file *filep)
+{
+    return filep->f_op == &pkernfs_file_fops;
+}
+
 static int truncate(struct inode *inode, loff_t newsize)
 {
 	unsigned long free_block;
@@ -79,6 +84,15 @@ static int mmap(struct file *filp, struct vm_area_struct *vma)
 				PMD_SIZE,
 				vma->vm_page_prot);
 	}
+	return 0;
+}
+
+int pkernfs_gmem_bind(struct kvm *kvm, struct kvm_memory_slot *slot,
+		      struct file *file, loff_t offset)
+{
+	printk("pkernfs_gmem_bind\n");
+	rcu_assign_pointer(slot->gmem.file, file);
+	slot->gmem.pgoff = 0;
 	return 0;
 }
 

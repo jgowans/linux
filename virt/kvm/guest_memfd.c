@@ -3,6 +3,7 @@
 #include <linux/falloc.h>
 #include <linux/kvm_host.h>
 #include <linux/pagemap.h>
+#include <linux/pkernfs.h>
 #include <linux/anon_inodes.h>
 
 #include "kvm_mm.h"
@@ -462,24 +463,14 @@ int kvm_gmem_create(struct kvm *kvm, struct kvm_create_guest_memfd *args)
 	return __kvm_gmem_create(kvm, size, flags);
 }
 
-int kvm_gmem_bind(struct kvm *kvm, struct kvm_memory_slot *slot,
-		  unsigned int fd, loff_t offset)
+static int _kvm_gmem_bind(struct kvm *kvm, struct kvm_memory_slot *slot,
+		  struct file *file, loff_t offset)
 {
 	loff_t size = slot->npages << PAGE_SHIFT;
 	unsigned long start, end;
 	struct kvm_gmem *gmem;
 	struct inode *inode;
-	struct file *file;
-	int r = -EINVAL;
-
-	BUILD_BUG_ON(sizeof(gfn_t) != sizeof(slot->gmem.pgoff));
-
-	file = fget(fd);
-	if (!file)
-		return -EBADF;
-
-	if (file->f_op != &kvm_gmem_fops)
-		goto err;
+	int r;
 
 	gmem = file->private_data;
 	if (gmem->kvm != kvm)
@@ -520,6 +511,26 @@ int kvm_gmem_bind(struct kvm *kvm, struct kvm_memory_slot *slot,
 	 */
 	r = 0;
 err:
+	return r;
+}
+
+int kvm_gmem_bind(struct kvm *kvm, struct kvm_memory_slot *slot,
+		  unsigned int fd, loff_t offset)
+{
+	struct file *file;
+	int r = -EINVAL;
+
+	BUILD_BUG_ON(sizeof(gfn_t) != sizeof(slot->gmem.pgoff));
+
+	file = fget(fd);
+	if (!file)
+		return -EBADF;
+
+	if (file->f_op == &kvm_gmem_fops)
+		r = _kvm_gmem_bind(kvm, slot, file, offset);
+	else if (is_pkernfs_file(file))
+		r = pkernfs_gmem_bind(kvm, slot, file, offset);
+
 	fput(file);
 	return r;
 }

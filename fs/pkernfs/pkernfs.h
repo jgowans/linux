@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 
+#include <linux/pkernfs.h>
 #include <linux/fs.h>
 
 #define PKERNFS_MAGIC_NUMBER 0x706b65726e6673
