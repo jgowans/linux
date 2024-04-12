@@ -626,8 +626,9 @@ int kvm_gmem_get_pfn(struct kvm *kvm, struct kvm_memory_slot *slot,
 		if (r)
 			goto out;
 		unlock_page(pfn_to_page(*pfn));
+	} else {
+		r = pkernfs_get_pfn(file, index, pfn, max_order);
 	}
-
 out:
 	fput(file);
 

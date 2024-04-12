@@ -96,6 +96,27 @@ int pkernfs_gmem_bind(struct kvm *kvm, struct kvm_memory_slot *slot,
 	return 0;
 }
 
+
+int pkernfs_get_pfn(struct file *file, pgoff_t index,
+		    kvm_pfn_t *pfn, int *max_order)
+{
+	unsigned long *mappings_block;
+	struct pkernfs_inode *pkernfs_inode;
+	unsigned long huge_pfn;
+	int mapped_block;
+
+	pkernfs_inode = pkernfs_get_persisted_inode(file->f_inode->i_sb, file->f_inode->i_ino);
+	mappings_block = (unsigned long *)pkernfs_addr_for_block(file->f_inode->i_sb,
+			pkernfs_inode->mappings_block);
+
+	mapped_block = *(mappings_block + (index / 512));
+	huge_pfn = (pkernfs_base >> PAGE_SHIFT) + (mapped_block * 512);
+	*pfn = huge_pfn + (index % 512);
+	if (max_order)
+		*max_order = 0;
+	return 0;
+}
+
 const struct inode_operations pkernfs_file_inode_operations = {
 	.setattr = inode_setattr,
 	.getattr = simple_getattr,

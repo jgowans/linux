@@ -11,5 +11,7 @@ bool is_pkernfs_file(struct file *filep);
 
 int pkernfs_gmem_bind(struct kvm *kvm, struct kvm_memory_slot *slot,
 		      struct file *file, loff_t offset);
+int pkernfs_get_pfn(struct file *file, pgoff_t index,
+		    kvm_pfn_t *pfn, int *max_order);
 
 #endif /* _LINUX_PKERNFS_H */
