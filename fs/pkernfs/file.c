@@ -85,6 +85,9 @@ static int mmap(struct file *filp, struct vm_area_struct *vma)
 		 * but that is currently static.
 		 * TODO: figure out the best way to install PMDs.
 		 */
+		pr_warn("mmapping huge pfn: 0x%llx\n", (pkernfs_base >> PAGE_SHIFT) + (mapped_block * 512));
+		pr_warn("...at address: 0x%lx\n", vma_addr_offset);
+		pr_warn("... vma->vm_page_prot 0x%lx\n", pgprot_val(vma->vm_page_prot));
 		rc = remap_pfn_range(vma,
 				vma_addr_offset,
 				(pkernfs_base >> PAGE_SHIFT) + (mapped_block * 512),
@@ -150,6 +153,8 @@ int pkernfs_get_pfn(struct file *file, pgoff_t index,
 	struct pkernfs_inode *pkernfs_inode;
 	unsigned long huge_pfn;
 	int mapped_block;
+
+	printk("pkernfs_get_pfn\n");
 
 	pkernfs_inode = pkernfs_get_persisted_inode(file->f_inode->i_sb, file->f_inode->i_ino);
 	mappings_block = (unsigned long *)pkernfs_addr_for_block(file->f_inode->i_sb,

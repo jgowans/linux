@@ -300,9 +300,11 @@ static const struct vm_operations_struct kvm_gmem_vm_ops = {
 
 static int kvm_gmem_mmap(struct file *file, struct vm_area_struct *vma)
 {
+	printk("kvm_gmem_mmap\n");
 	/* No support for private mappings to avoid COW.  */
 	if ((vma->vm_flags & (VM_SHARED | VM_MAYSHARE)) !=
 	    (VM_SHARED | VM_MAYSHARE)) {
+		printk("returning an error\n");
 		return -EINVAL;
 	}
 
