@@ -3,6 +3,13 @@
 #include "pkernfs.h"
 #include <linux/mm.h>
 
+/* Duplicated; factor out. */
+struct kvm_gmem {
+	struct kvm *kvm;
+	struct xarray bindings;
+	struct list_head entry;
+};
+
 bool is_pkernfs_file(struct file *filep)
 {
     return filep->f_op == &pkernfs_file_fops;
@@ -90,10 +97,49 @@ static int mmap(struct file *filp, struct vm_area_struct *vma)
 int pkernfs_gmem_bind(struct kvm *kvm, struct kvm_memory_slot *slot,
 		      struct file *file, loff_t offset)
 {
+	struct inode *inode;
+	loff_t size = slot->npages << PAGE_SHIFT;
+	unsigned long start, end;
+	struct kvm_gmem *gmem;
+	int r = 0;
+
 	printk("pkernfs_gmem_bind\n");
+
+	gmem = file->private_data;
+	if (gmem->kvm != kvm) {
+		printk("clobbering gmem->kvm\n");
+		gmem->kvm = kvm;
+	}
+
+	inode = file_inode(file);
+
+	if (offset < 0 || !PAGE_ALIGNED(offset) ||
+	    offset + size > i_size_read(inode))
+		goto err;
+
+	filemap_invalidate_lock(inode->i_mapping);
+
+	start = offset >> PAGE_SHIFT;
+	end = start + slot->npages;
+
+	if (!xa_empty(&gmem->bindings) &&
+	    xa_find(&gmem->bindings, &start, end - 1, XA_PRESENT)) {
+		filemap_invalidate_unlock(inode->i_mapping);
+		goto err;
+	}
+
+	/*
+	 * No synchronize_rcu() needed, any in-flight readers are guaranteed to
+	 * be see either a NULL file or this new file, no need for them to go
+	 * away.
+	 */
 	rcu_assign_pointer(slot->gmem.file, file);
-	slot->gmem.pgoff = 0;
-	return 0;
+	slot->gmem.pgoff = start;
+
+	xa_store_range(&gmem->bindings, start, end - 1, slot, GFP_KERNEL);
+	filemap_invalidate_unlock(inode->i_mapping);
+err:
+	return r;
 }
 
 
@@ -112,8 +158,15 @@ int pkernfs_get_pfn(struct file *file, pgoff_t index,
 	mapped_block = *(mappings_block + (index / 512));
 	huge_pfn = (pkernfs_base >> PAGE_SHIFT) + (mapped_block * 512);
 	*pfn = huge_pfn + (index % 512);
+	printk("pfn: 0x%llx\n", *pfn);
 	if (max_order)
 		*max_order = 0;
+	return 0;
+}
+
+static int open(struct inode *inode, struct file *file) {
+	printk("pkernfs open\n");
+	file->private_data = kzalloc(sizeof(struct kvm_gmem), GFP_KERNEL);
 	return 0;
 }
 
@@ -125,4 +178,5 @@ const struct inode_operations pkernfs_file_inode_operations = {
 const struct file_operations pkernfs_file_fops = {
 	.owner = THIS_MODULE,
 	.mmap = mmap,
+	.open = open,
 };
