@@ -704,6 +704,10 @@ static int arm_perf_starting_cpu(unsigned int cpu, struct hlist_node *node)
 	struct arm_pmu *pmu = hlist_entry_safe(node, struct arm_pmu, node);
 	int irq;
 
+	//pr_info("%i - PID: %d Comm: %.20s : %s+%d:%s: in arm_perf_starting_cpu",
+	//		raw_smp_processor_id(), current->pid, current->comm, __FILE__, __LINE__, __FUNCTION__);
+
+	arch_kgdb_breakpoint();
 	if (!cpumask_test_cpu(cpu, &pmu->supported_cpus))
 		return 0;
 	if (pmu->reset)
@@ -714,6 +718,9 @@ static int arm_perf_starting_cpu(unsigned int cpu, struct hlist_node *node)
 	irq = armpmu_get_cpu_irq(pmu, cpu);
 	if (irq)
 		per_cpu(cpu_irq_ops, cpu)->enable_pmuirq(irq);
+
+	//pr_info("%i - PID: %d Comm: %.20s : %s+%d:%s: complete arm_perf_starting_cpu",
+	//		raw_smp_processor_id(), current->pid, current->comm, __FILE__, __LINE__, __FUNCTION__);
 
 	return 0;
 }
@@ -823,10 +830,16 @@ static int cpu_pmu_init(struct arm_pmu *cpu_pmu)
 {
 	int err;
 
+	//pr_info("%i - PID: %d Comm: %.20s : %s+%d:%s: about to cpuhp_state_add_instance",
+	//		raw_smp_processor_id(), current->pid, current->comm, __FILE__, __LINE__, __FUNCTION__);
+
 	err = cpuhp_state_add_instance(CPUHP_AP_PERF_ARM_STARTING,
 				       &cpu_pmu->node);
 	if (err)
 		goto out;
+
+	//pr_info("%i - PID: %d Comm: %.20s : %s+%d:%s: about to cpu_pm_pmu_register",
+	//		raw_smp_processor_id(), current->pid, current->comm, __FILE__, __LINE__, __FUNCTION__);
 
 	err = cpu_pm_pmu_register(cpu_pmu);
 	if (err)
@@ -913,13 +926,25 @@ int armpmu_register(struct arm_pmu *pmu)
 {
 	int ret;
 
+	pr_info("%i - PID: %d Comm: %.20s : %s+%d:%s: about to cpu_pmu_init",
+			raw_smp_processor_id(), current->pid, current->comm, __FILE__, __LINE__, __FUNCTION__);
+	arch_kgdb_breakpoint();
 	ret = cpu_pmu_init(pmu);
 	if (ret)
 		return ret;
 
+	arch_kgdb_breakpoint();
+	if (local_clock() > 5UL * 1000 * 1000 * 1000) {
+		pr_info("cpu_pmu_init took a long time\n");
+		/* "API" for triggering a ftrace dump... */
+		pr_info("Trigger reset\n");
+	}
+
 	if (!pmu->set_event_filter)
 		pmu->pmu.capabilities |= PERF_PMU_CAP_NO_EXCLUDE;
 
+	pr_info("%i - PID: %d Comm: %.20s : %s+%d:%s: about to perf_pmu_register",
+			raw_smp_processor_id(), current->pid, current->comm, __FILE__, __LINE__, __FUNCTION__);
 	ret = perf_pmu_register(&pmu->pmu, pmu->name, -1);
 	if (ret)
 		goto out_destroy;

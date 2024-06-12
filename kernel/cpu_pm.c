@@ -63,8 +63,14 @@ int cpu_pm_register_notifier(struct notifier_block *nb)
 	unsigned long flags;
 	int ret;
 
+	pr_info("%i - PID: %d Comm: %.20s : %s+%d:%s: taking &cpu_pm_notifier.lock,",
+			raw_smp_processor_id(), current->pid, current->comm, __FILE__, __LINE__, __FUNCTION__);
 	raw_spin_lock_irqsave(&cpu_pm_notifier.lock, flags);
+	pr_info("%i - PID: %d Comm: %.20s : %s+%d:%s: got &cpu_pm_notifier.lock,",
+			raw_smp_processor_id(), current->pid, current->comm, __FILE__, __LINE__, __FUNCTION__);
 	ret = raw_notifier_chain_register(&cpu_pm_notifier.chain, nb);
+	pr_info("%i - PID: %d Comm: %.20s : %s+%d:%s: releasing &cpu_pm_notifier.lock,",
+			raw_smp_processor_id(), current->pid, current->comm, __FILE__, __LINE__, __FUNCTION__);
 	raw_spin_unlock_irqrestore(&cpu_pm_notifier.lock, flags);
 	return ret;
 }

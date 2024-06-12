@@ -125,6 +125,7 @@ static void pci_std_update_resource(struct pci_dev *dev, int resno)
 
 void pci_update_resource(struct pci_dev *dev, int resno)
 {
+	//pri_info(dev, "pci_update_resource\n")
 	if (resno <= PCI_ROM_RESOURCE)
 		pci_std_update_resource(dev, resno);
 #ifdef CONFIG_PCI_IOV
@@ -330,6 +331,8 @@ int pci_assign_resource(struct pci_dev *dev, int resno)
 	const char *res_name = pci_resource_name(dev, resno);
 	resource_size_t align, size;
 	int ret;
+
+	pr_info("pci_assign_resource\n");
 
 	if (res->flags & IORESOURCE_PCI_FIXED)
 		return 0;

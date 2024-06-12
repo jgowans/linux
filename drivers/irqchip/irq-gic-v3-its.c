@@ -4811,6 +4811,8 @@ static void __maybe_unused its_quirk_gic700_2195890_work_handler(struct work_str
 
 static bool __maybe_unused __init its_enable_quirk_gic700_2195890(void *data)
 {
+	pr_info("its_enable_quirk_gic700_2195890\n");
+
 	if (its_quirk_gic700_2195890_data.lpi)
 		return true;
 
@@ -4912,6 +4914,8 @@ static const struct gic_quirk its_quirks[] = {
 static void its_enable_quirks(struct its_node *its)
 {
 	u32 iidr = readl_relaxed(its->base + GITS_IIDR);
+
+	pr_info("its_enable_quirks iidr=%x\n", iidr);
 
 	gic_enable_quirks(iidr, its_quirks, its);
 

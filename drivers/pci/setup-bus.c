@@ -2056,6 +2056,7 @@ void pci_assign_unassigned_root_bus_resources(struct pci_bus *bus)
 
 	/* Don't realloc if asked to do so */
 	enable_local = pci_realloc_detect(bus, pci_realloc_enable);
+	pr_info("pci_assign_unassigned_root_bus_resources pci_realloc_detect=%i\n", enable_local);
 	if (pci_realloc_enabled(enable_local)) {
 		int max_depth = pci_bus_get_depth(bus);
 
