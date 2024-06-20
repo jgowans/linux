@@ -4,3 +4,5 @@
 #
 
 obj-y += guestmemfs.o inode.o dir.o allocator.o file.o
+
+obj-$(CONFIG_KEXEC_KHO) += serialise.o

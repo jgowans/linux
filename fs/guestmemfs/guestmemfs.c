@@ -3,6 +3,7 @@
 #include "guestmemfs.h"
 #include <linux/dcache.h>
 #include <linux/fs.h>
+#include <linux/kexec.h>
 #include <linux/module.h>
 #include <linux/fs_context.h>
 #include <linux/io.h>
@@ -10,7 +11,7 @@
 #include <linux/statfs.h>
 
 phys_addr_t guestmemfs_base, guestmemfs_size;
-struct guestmemfs_sb *psb;
+struct super_block *guestmemfs_sb;
 
 static int statfs(struct dentry *root, struct kstatfs *buf)
 {
@@ -33,26 +34,39 @@ static int guestmemfs_fill_super(struct super_block *sb, struct fs_context *fc)
 	struct inode *inode;
 	struct dentry *dentry;
 
-	psb = kzalloc(sizeof(*psb), GFP_KERNEL);
-	psb->inodes = kzalloc(2 << 20, GFP_KERNEL);
-	if (!psb->inodes)
-		return -ENOMEM;
-	psb->allocator_bitmap = kzalloc(1 << 20, GFP_KERNEL);
-	if (!psb->allocator_bitmap)
-		return -ENOMEM;
-
 	/*
 	 * Keep a reference to the persistent super block in the
 	 * ephemeral super block.
 	 */
-	sb->s_fs_info = psb;
-	spin_lock_init(&psb->allocation_lock);
-	guestmemfs_initialise_inode_store(sb);
-	guestmemfs_zero_allocations(sb);
-	guestmemfs_get_persisted_inode(sb, 1)->flags = GUESTMEMFS_INODE_FLAG_DIR;
-	strscpy(guestmemfs_get_persisted_inode(sb, 1)->filename, ".",
-			GUESTMEMFS_FILENAME_LEN);
-	psb->next_free_ino = 2;
+	sb->s_fs_info = guestmemfs_restore_from_kho();
+
+	if (GUESTMEMFS_PSB(sb)) {
+		pr_info("Restored super block from KHO\n");
+	} else {
+		struct guestmemfs_sb *psb;
+
+		pr_info("Did not restore from KHO - allocating free\n");
+		psb = kzalloc(sizeof(*psb), GFP_KERNEL);
+		psb->inodes = kzalloc(2 << 20, GFP_KERNEL);
+		if (!psb->inodes)
+			return -ENOMEM;
+		psb->allocator_bitmap = kzalloc(1 << 20, GFP_KERNEL);
+		if (!psb->allocator_bitmap)
+			return -ENOMEM;
+		sb->s_fs_info = psb;
+		spin_lock_init(&psb->allocation_lock);
+		guestmemfs_initialise_inode_store(sb);
+		guestmemfs_zero_allocations(sb);
+		guestmemfs_get_persisted_inode(sb, 1)->flags = GUESTMEMFS_INODE_FLAG_DIR;
+		strscpy(guestmemfs_get_persisted_inode(sb, 1)->filename, ".",
+				GUESTMEMFS_FILENAME_LEN);
+		GUESTMEMFS_PSB(sb)->next_free_ino = 2;
+	}
+	/*
+	 * Keep a reference to this sb; the serialise callback needs it
+	 * and has no oher way to get it.
+	 */
+	guestmemfs_sb = sb;
 
 	sb->s_op = &guestmemfs_super_ops;
 
@@ -98,11 +112,18 @@ static struct file_system_type guestmemfs_fs_type = {
 	.fs_flags               = FS_USERNS_MOUNT,
 };
 
+
+static struct notifier_block trace_kho_nb = {
+	.notifier_call = guestmemfs_serialise_to_kho,
+};
+
 static int __init guestmemfs_init(void)
 {
 	int ret;
 
 	ret = register_filesystem(&guestmemfs_fs_type);
+	if (IS_ENABLED(CONFIG_FTRACE_KHO))
+		register_kho_notifier(&trace_kho_nb);
 	return ret;
 }
 
@@ -120,13 +141,18 @@ early_param("guestmemfs", parse_guestmemfs_extents);
 
 void __init guestmemfs_reserve_mem(void)
 {
-	guestmemfs_base = memblock_phys_alloc(guestmemfs_size, 4 << 10);
-	if (guestmemfs_base) {
-		memblock_reserved_mark_noinit(guestmemfs_base, guestmemfs_size);
-		memblock_mark_nomap(guestmemfs_base, guestmemfs_size);
-	} else {
-		pr_warn("Failed to alloc %llu bytes for guestmemfs\n", guestmemfs_size);
+	if (guestmemfs_size) {
+		guestmemfs_base = memblock_phys_alloc(guestmemfs_size, 4 << 10);
+
+		if (guestmemfs_base) {
+			memblock_reserved_mark_noinit(guestmemfs_base, guestmemfs_size);
+			memblock_mark_nomap(guestmemfs_base, guestmemfs_size);
+			pr_debug("guestmemfs reserved base=%llu from memblocks\n", guestmemfs_base);
+		} else {
+			pr_warn("Failed to alloc %llu bytes for guestmemfs\n", guestmemfs_size);
+		}
 	}
+
 }
 
 MODULE_ALIAS_FS("guestmemfs");

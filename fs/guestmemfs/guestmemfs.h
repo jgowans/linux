@@ -10,11 +10,14 @@
 
 /* Units of bytes */
 extern phys_addr_t guestmemfs_base, guestmemfs_size;
+extern struct super_block *guestmemfs_sb;
 
 struct guestmemfs_sb {
 	/* Inode number */
 	unsigned long next_free_ino;
 	unsigned long allocated_inodes;
+
+	/* Ephemeral fields - must be updated on deserialise */
 	struct guestmemfs_inode *inodes;
 	void *allocator_bitmap;
 	spinlock_t allocation_lock;
@@ -45,6 +48,11 @@ void guestmemfs_zero_allocations(struct super_block *sb);
 long guestmemfs_alloc_block(struct super_block *sb);
 struct inode *guestmemfs_inode_get(struct super_block *sb, unsigned long ino);
 struct guestmemfs_inode *guestmemfs_get_persisted_inode(struct super_block *sb, int ino);
+
+int guestmemfs_serialise_to_kho(struct notifier_block *self,
+			      unsigned long cmd,
+			      void *v);
+struct guestmemfs_sb *guestmemfs_restore_from_kho(void);
 
 extern const struct file_operations guestmemfs_dir_fops;
 extern const struct file_operations guestmemfs_file_fops;
