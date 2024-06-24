@@ -53,6 +53,12 @@
 
 /* KHO passes an array of kho_mem as "mem cache" to the new kernel */
 struct kho_mem {
+	/*
+	 * Use the last bits for flags; addrs should be at least word
+	 * aligned.
+	 */
+#define KHO_MEM_ADDR_FLAG_NOINIT	BIT(0)
+#define KHO_MEM_ADDR_FLAG_MASK		(BIT(1) - 1)
 	__u64 addr;
 	__u64 len;
 };
