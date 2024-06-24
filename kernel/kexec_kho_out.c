@@ -175,6 +175,10 @@ static int kho_alloc_mem_cache(struct kimage *image, void *fdt)
 			const struct kho_mem *mem = &mems[i];
 			ulong mstart = PAGE_ALIGN_DOWN(mem->addr);
 			ulong mend = PAGE_ALIGN(mem->addr + mem->len);
+
+			/* Re-apply flags lost during round down. */
+			mstart |= mem->addr & KHO_MEM_ADDR_FLAG_MASK;
+
 			struct kho_mem cmem = {
 				.addr = mstart,
 				.len = (mend - mstart),

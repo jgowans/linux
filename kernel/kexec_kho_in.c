@@ -75,6 +75,11 @@ __init void kho_populate_refcount(void)
 	 */
 	for (offset = 0; offset < mem_len; offset += sizeof(struct kho_mem)) {
 		struct kho_mem *mem = mem_virt + offset;
+
+		/* No struct pages for this region; nothing to claim. */
+		if (mem->addr & KHO_MEM_ADDR_FLAG_NOINIT)
+			continue;
+
 		u64 start_pfn = PFN_DOWN(mem->addr);
 		u64 end_pfn = PFN_UP(mem->addr + mem->len);
 		u64 pfn;
@@ -183,8 +188,13 @@ void __init kho_reserve_previous_mem(void)
 	/* Then populate all preserved memory areas as reserved */
 	for (off = 0; off < mem_len; off += sizeof(struct kho_mem)) {
 		struct kho_mem *mem = mem_virt + off;
+		__u64 addr = mem->addr & ~KHO_MEM_ADDR_FLAG_MASK;
 
-		memblock_reserve(mem->addr, mem->len);
+		memblock_reserve(addr, mem->len);
+		if (mem->addr & KHO_MEM_ADDR_FLAG_NOINIT) {
+			memblock_reserved_mark_noinit(addr, mem->len);
+			memblock_mark_nomap(addr, mem->len);
+		}
 	}
 
 	/* Unreserve the mem cache - we don't need it from here on */
