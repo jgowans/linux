@@ -37,6 +37,9 @@ static int guestmemfs_fill_super(struct super_block *sb, struct fs_context *fc)
 	psb->inodes = kzalloc(2 << 20, GFP_KERNEL);
 	if (!psb->inodes)
 		return -ENOMEM;
+	psb->allocator_bitmap = kzalloc(1 << 20, GFP_KERNEL);
+	if (!psb->allocator_bitmap)
+		return -ENOMEM;
 
 	/*
 	 * Keep a reference to the persistent super block in the
@@ -45,6 +48,7 @@ static int guestmemfs_fill_super(struct super_block *sb, struct fs_context *fc)
 	sb->s_fs_info = psb;
 	spin_lock_init(&psb->allocation_lock);
 	guestmemfs_initialise_inode_store(sb);
+	guestmemfs_zero_allocations(sb);
 	guestmemfs_get_persisted_inode(sb, 1)->flags = GUESTMEMFS_INODE_FLAG_DIR;
 	strscpy(guestmemfs_get_persisted_inode(sb, 1)->filename, ".",
 			GUESTMEMFS_FILENAME_LEN);

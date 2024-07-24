@@ -13,6 +13,7 @@ struct guestmemfs_sb {
 	unsigned long next_free_ino;
 	unsigned long allocated_inodes;
 	struct guestmemfs_inode *inodes;
+	void *allocator_bitmap;
 	spinlock_t allocation_lock;
 };
 
@@ -37,6 +38,8 @@ struct guestmemfs_inode {
 };
 
 void guestmemfs_initialise_inode_store(struct super_block *sb);
+void guestmemfs_zero_allocations(struct super_block *sb);
+long guestmemfs_alloc_block(struct super_block *sb);
 struct inode *guestmemfs_inode_get(struct super_block *sb, unsigned long ino);
 struct guestmemfs_inode *guestmemfs_get_persisted_inode(struct super_block *sb, int ino);
 
