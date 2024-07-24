@@ -9764,6 +9764,14 @@ S:	Maintained
 T:	git git://git.kernel.org/pub/scm/linux/kernel/git/pablo/gtp.git
 F:	drivers/net/gtp.c
 
+GUESTMEMFS
+M:	James Gowans <jgowans@amazon.com>
+M:	Alex Graf <graf@amazon.de>
+L:	linux-fsdevel@vger.kernel.org
+S:	Maintained
+F:	Documentation/filesystems/guestmemfs.rst
+F:	fs/guestmemfs/
+
 GUID PARTITION TABLE (GPT)
 M:	Davidlohr Bueso <dave@stgolabs.net>
 L:	linux-efi@vger.kernel.org
