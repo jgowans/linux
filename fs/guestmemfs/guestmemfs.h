@@ -21,6 +21,7 @@ struct guestmemfs_sb {
 	struct guestmemfs_inode *inodes;
 	void *allocator_bitmap;
 	spinlock_t allocation_lock;
+	bool serialised;
 };
 
 // If neither of these are set the inode is not in use.

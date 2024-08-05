@@ -48,6 +48,12 @@ static unsigned long guestmemfs_allocate_inode(struct super_block *sb)
 	struct guestmemfs_sb *psb = GUESTMEMFS_PSB(sb);
 
 	spin_lock(&psb->allocation_lock);
+
+	if (psb->serialised) {
+	    spin_unlock(&psb->allocation_lock);
+	    return -EBUSY;
+	}
+
 	next_free_ino = psb->next_free_ino;
 	psb->allocated_inodes += 1;
 	if (!next_free_ino)

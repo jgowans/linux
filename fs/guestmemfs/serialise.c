@@ -111,7 +111,7 @@ int guestmemfs_serialise_to_kho(struct notifier_block *self,
 
 	switch (cmd) {
 	case KEXEC_KHO_ABORT:
-		/* No rollback action needed. */
+		GUESTMEMFS_PSB(guestmemfs_sb)->serialised = 0;
 		return NOTIFY_DONE;
 	case KEXEC_KHO_DUMP:
 		/* Handled below */
@@ -120,6 +120,7 @@ int guestmemfs_serialise_to_kho(struct notifier_block *self,
 		return NOTIFY_BAD;
 	}
 
+	spin_lock(&GUESTMEMFS_PSB(guestmemfs_sb)->allocation_lock);
 	err |= fdt_begin_node(fdt, "guestmemfs");
 	err |= fdt_property(fdt, "compatible", compatible, sizeof(compatible));
 
@@ -133,6 +134,11 @@ int guestmemfs_serialise_to_kho(struct notifier_block *self,
 	err |= serialise_mappings_blocks(guestmemfs_sb, fdt);
 
 	err |= fdt_end_node(fdt);
+
+	if (!err)
+		GUESTMEMFS_PSB(guestmemfs_sb)->serialised = 1;
+
+	spin_unlock(&GUESTMEMFS_PSB(guestmemfs_sb)->allocation_lock);
 
 	pr_info("Serialised extends [0x%llx + 0x%llx] via KHO: %i\n",
 			guestmemfs_base, guestmemfs_size, err);

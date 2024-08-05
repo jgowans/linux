@@ -42,6 +42,7 @@ static int guestmemfs_fill_super(struct super_block *sb, struct fs_context *fc)
 
 	if (GUESTMEMFS_PSB(sb)) {
 		pr_info("Restored super block from KHO\n");
+		GUESTMEMFS_PSB(sb)->serialised = 0;
 	} else {
 		struct guestmemfs_sb *psb;
 
