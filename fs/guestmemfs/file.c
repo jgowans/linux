@@ -8,19 +8,32 @@ static int truncate(struct inode *inode, loff_t newsize)
 	unsigned long free_block;
 	struct guestmemfs_inode *guestmemfs_inode;
 	unsigned long *mappings;
+	int rc = 0;
+	struct guestmemfs_sb *psb = GUESTMEMFS_PSB(inode->i_sb);
+
+	spin_lock(&psb->allocation_lock);
+
+	if (psb->serialised) {
+		rc = -EBUSY;
+		goto out;
+	}
 
 	guestmemfs_inode = guestmemfs_get_persisted_inode(inode->i_sb, inode->i_ino);
 	mappings = guestmemfs_inode->mappings;
 	i_size_write(inode, newsize);
 	for (int block_idx = 0; block_idx * PMD_SIZE < newsize; ++block_idx) {
 		free_block = guestmemfs_alloc_block(inode->i_sb);
-		if (free_block < 0)
+		if (free_block < 0) {
 			/* TODO: roll back allocations. */
-			return -ENOMEM;
+			rc = -ENOMEM;
+			goto out;
+		}
 		*(mappings + block_idx) = free_block;
 		++guestmemfs_inode->num_mappings;
 	}
-	return 0;
+out:
+	spin_unlock(&psb->allocation_lock);
+	return rc;
 }
 
 static int inode_setattr(struct mnt_idmap *idmap, struct dentry *dentry, struct iattr *iattr)
