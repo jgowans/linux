@@ -29,6 +29,8 @@ struct iommufd_object_ops {
 static const struct iommufd_object_ops iommufd_object_ops[];
 static struct miscdevice vfio_misc_dev;
 
+static DEFINE_XARRAY_ALLOC(persistent_iommufds);
+
 struct iommufd_object *_iommufd_object_alloc(struct iommufd_ctx *ictx,
 					     size_t size,
 					     enum iommufd_object_type type)
@@ -287,8 +289,50 @@ static int iommufd_fops_release(struct inode *inode, struct file *filp)
 			break;
 	}
 	WARN_ON(!xa_empty(&ictx->groups));
+
+	rcu_read_lock();
+	if (ictx->persistent_id)
+		xa_erase(&persistent_iommufds, ictx->persistent_id);
+	rcu_read_unlock();
 	kfree(ictx);
 	return 0;
+}
+
+static int iommufd_option_persistent(struct iommufd_ucmd *ucmd)
+{
+	unsigned int persistent_id;
+	int rc;
+	struct iommu_option *cmd = ucmd->cmd;
+	struct iommufd_ctx *ictx = ucmd->ictx;
+	struct xa_limit id_limit = XA_LIMIT(1, UINT_MAX);
+
+	if (cmd->op == IOMMU_OPTION_OP_GET) {
+		cmd->val64 = ictx->persistent_id;
+		return 0;
+	}
+
+	if (cmd->op == IOMMU_OPTION_OP_SET) {
+		/*
+		 * iommufds can only be marked persistent before they
+		 * have been used for DMA mappings. HWPTs must be known
+		 * to be persistent at creation time.
+		 */
+		if (!xa_empty(&ictx->objects)) {
+			pr_warn("iommufd can only be marked persistented when unused\n");
+			return -EFAULT;
+		}
+
+		rc = xa_alloc(&persistent_iommufds, &persistent_id, ictx, id_limit, GFP_KERNEL_ACCOUNT);
+		if (rc) {
+			pr_warn("Unable to keep track of iommufd object\n");
+			return rc;
+		}
+
+		ictx->persistent_id = persistent_id;
+		cmd->val64 = ictx->persistent_id;
+		return 0;
+	}
+	return -EOPNOTSUPP;
 }
 
 static int iommufd_option(struct iommufd_ucmd *ucmd)
@@ -305,6 +349,9 @@ static int iommufd_option(struct iommufd_ucmd *ucmd)
 		break;
 	case IOMMU_OPTION_HUGE_PAGES:
 		rc = iommufd_ioas_option(ucmd);
+		break;
+	case IOMMU_OPTION_PERSISTENT:
+		rc = iommufd_option_persistent(ucmd);
 		break;
 	default:
 		return -EOPNOTSUPP;

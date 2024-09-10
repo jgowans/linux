@@ -276,10 +276,15 @@ struct iommu_ioas_unmap {
  *    iommu mappings. Value 0 disables combining, everything is mapped to
  *    PAGE_SIZE. This can be useful for benchmarking.  This is a per-IOAS
  *    option, the object_id must be the IOAS ID.
+ * @IOMMU_OPTION_PERSISTENT
+ *    Value 1 sets this iommufd object as a persistent iommufd. Mappings will
+ *    survive across kexec. The returned value is the persistent ID which can
+ *    be used to restore the iommufd after kexec.
  */
 enum iommufd_option {
 	IOMMU_OPTION_RLIMIT_MODE = 0,
 	IOMMU_OPTION_HUGE_PAGES = 1,
+	IOMMU_OPTION_PERSISTENT = 2,
 };
 
 /**
