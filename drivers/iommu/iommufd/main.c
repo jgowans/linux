@@ -10,6 +10,7 @@
 
 #include <linux/file.h>
 #include <linux/fs.h>
+#include <linux/kexec.h>
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/miscdevice.h>
@@ -590,6 +591,10 @@ static struct miscdevice vfio_misc_dev = {
 	.mode = 0666,
 };
 
+static struct notifier_block serialise_kho_nb = {
+	.notifier_call = iommufd_serialise_kho,
+};
+
 static int __init iommufd_init(void)
 {
 	int ret;
@@ -603,11 +608,26 @@ static int __init iommufd_init(void)
 		if (ret)
 			goto err_misc;
 	}
-	ret = iommufd_test_init();
+
+	if (IS_ENABLED(CONFIG_KEXEC_KHO)) {
+		ret = register_kho_notifier(&serialise_kho_nb);
+		if (ret)
+			goto err_vfio_misc;
+	}
+
+	ret = iommufd_deserialise_kho();
 	if (ret)
-		goto err_vfio_misc;
+		goto err_kho;
+
+	ret = iommufd_test_init();
+
+	if (ret)
+		goto err_kho;
 	return 0;
 
+err_kho:
+	if (IS_ENABLED(CONFIG_KEXEC_KHO))
+		unregister_kho_notifier(&serialise_kho_nb);
 err_vfio_misc:
 	if (IS_ENABLED(CONFIG_IOMMUFD_VFIO_CONTAINER))
 		misc_deregister(&vfio_misc_dev);
@@ -621,6 +641,8 @@ static void __exit iommufd_exit(void)
 	iommufd_test_exit();
 	if (IS_ENABLED(CONFIG_IOMMUFD_VFIO_CONTAINER))
 		misc_deregister(&vfio_misc_dev);
+	if (IS_ENABLED(CONFIG_FTRACE_KHO))
+		unregister_kho_notifier(&serialise_kho_nb);
 	misc_deregister(&iommu_misc_dev);
 }
 

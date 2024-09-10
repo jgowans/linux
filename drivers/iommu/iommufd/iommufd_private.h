@@ -497,6 +497,28 @@ static inline void iommufd_hwpt_detach_device(struct iommufd_hw_pagetable *hwpt,
 	iommu_detach_group(hwpt->domain, idev->igroup->group);
 }
 
+/*
+ * Serialise is invoked as a callback by KHO when changing KHO active state,
+ * it stores current iommufd state into KHO's persistent store.
+ * Deserialise is run by the iommufd module when loaded to re-hydrate state
+ * carried across from the previous kernel.
+ */
+#ifdef CONFIG_KEXEC_KHO
+int iommufd_serialise_kho(struct notifier_block *self, unsigned long cmd,
+			  void *fdt);
+int __init iommufd_deserialise_kho(void);
+#else
+int iommufd_serialise_kho(struct notifier_block *self, unsigned long cmd,
+			  void *fdt)
+{
+	return 0;
+}
+int __init iommufd_deserialise_kho(void)
+{
+	return 0;
+}
+#endif
+
 static inline int iommufd_hwpt_replace_device(struct iommufd_device *idev,
 					      struct iommufd_hw_pagetable *hwpt,
 					      struct iommufd_hw_pagetable *old)
