@@ -3049,6 +3049,7 @@ static struct iommu_domain arm_smmu_blocked_domain = {
 static struct iommu_domain *
 arm_smmu_domain_alloc_user(struct device *dev, u32 flags,
 			   struct iommu_domain *parent,
+			   unsigned long persistent_id,
 			   const struct iommu_user_data *user_data)
 {
 	struct arm_smmu_master *master = dev_iommu_priv_get(dev);
@@ -3058,7 +3059,7 @@ arm_smmu_domain_alloc_user(struct device *dev, u32 flags,
 
 	if (flags & ~PAGING_FLAGS)
 		return ERR_PTR(-EOPNOTSUPP);
-	if (parent || user_data)
+	if (parent || user_data || persistent_id)
 		return ERR_PTR(-EOPNOTSUPP);
 
 	smmu_domain = arm_smmu_domain_alloc();

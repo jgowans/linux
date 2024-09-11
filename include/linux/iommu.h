@@ -215,6 +215,11 @@ struct iommu_domain {
 	struct iommu_dma_cookie *iova_cookie;
 	int (*iopf_handler)(struct iopf_group *group);
 	void *fault_data;
+	/*
+	 * Persisting and restoring across kexec via KHO.
+	 * 0 indicates non-persistent.
+	 */
+	unsigned long persistent_id;
 	union {
 		struct {
 			iommu_fault_handler_t handler;
@@ -518,7 +523,9 @@ static inline int __iommu_copy_struct_from_user_array(
  *                     IOMMU_DOMAIN_NESTED type; otherwise, the @parent must be
  *                     NULL while the @user_data can be optionally provided, the
  *                     new domain must support __IOMMU_DOMAIN_PAGING.
- *                     Upon failure, ERR_PTR must be returned.
+ *                     Upon failure, ERR_PTR must be returned. Persistent ID is
+ *                     used to save/restore across kexec; 0 indicates not
+ *                     persistent.
  * @domain_alloc_paging: Allocate an iommu_domain that can be used for
  *                       UNMANAGED, DMA, and DMA_FQ domain types.
  * @domain_alloc_sva: Allocate an iommu_domain for Shared Virtual Addressing.
@@ -564,7 +571,7 @@ struct iommu_ops {
 	struct iommu_domain *(*domain_alloc)(unsigned iommu_domain_type);
 	struct iommu_domain *(*domain_alloc_user)(
 		struct device *dev, u32 flags, struct iommu_domain *parent,
-		const struct iommu_user_data *user_data);
+		unsigned long persistent_id, const struct iommu_user_data *user_data);
 	struct iommu_domain *(*domain_alloc_paging)(struct device *dev);
 	struct iommu_domain *(*domain_alloc_sva)(struct device *dev,
 						 struct mm_struct *mm);

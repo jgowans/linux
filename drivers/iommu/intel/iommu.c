@@ -3729,6 +3729,7 @@ static struct iommu_domain *intel_iommu_domain_alloc(unsigned type)
 static struct iommu_domain *
 intel_iommu_domain_alloc_user(struct device *dev, u32 flags,
 			      struct iommu_domain *parent,
+			      unsigned long persistent_id,
 			      const struct iommu_user_data *user_data)
 {
 	struct device_domain_info *info = dev_iommu_priv_get(dev);
@@ -3761,6 +3762,7 @@ intel_iommu_domain_alloc_user(struct device *dev, u32 flags,
 	domain->type = IOMMU_DOMAIN_UNMANAGED;
 	domain->owner = &intel_iommu_ops;
 	domain->ops = intel_iommu_ops.default_domain_ops;
+	domain->persistent_id = persistent_id;
 
 	if (nested_parent) {
 		dmar_domain->nested_parent = true;
