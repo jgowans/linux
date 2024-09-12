@@ -18,6 +18,8 @@ struct iommu_group;
 struct iommu_option;
 struct iommufd_device;
 
+extern struct xarray persistent_iommufds;
+
 struct iommufd_ctx {
 	struct file *file;
 	struct xarray objects;

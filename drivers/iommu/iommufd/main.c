@@ -30,7 +30,7 @@ struct iommufd_object_ops {
 static const struct iommufd_object_ops iommufd_object_ops[];
 static struct miscdevice vfio_misc_dev;
 
-static DEFINE_XARRAY_ALLOC(persistent_iommufds);
+DEFINE_XARRAY_ALLOC(persistent_iommufds);
 
 struct iommufd_object *_iommufd_object_alloc(struct iommufd_ctx *ictx,
 					     size_t size,
