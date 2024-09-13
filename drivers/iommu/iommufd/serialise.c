@@ -21,6 +21,9 @@
  *     }
  *   ]
  */
+
+static struct kobject *persisted_dir_kobj;
+
 static int serialise_iommufd(void *fdt, struct iommufd_ctx *ictx)
 {
 	int err = 0;
@@ -94,8 +97,51 @@ int iommufd_serialise_kho(struct notifier_block *self, unsigned long cmd,
 	}
 }
 
+static ssize_t iommufd_show(struct kobject *kobj, struct kobj_attribute *attr,
+	char *buf)
+{
+	return 0;
+}
+
+static struct kobj_attribute persisted_attr =
+	__ATTR_RO_MODE(iommufd, 0440);
+
+static int deserialise_iommufds(const void *fdt, int root_off)
+{
+	int off;
+
+	/*
+	 * For each persisted iommufd id, create a directory
+	 * in sysfs with an iommufd file in it.
+	 */
+	fdt_for_each_subnode(off, fdt, root_off) {
+		struct kobject *kobj;
+		const char *name = fdt_get_name(fdt, off, NULL);
+		int rc;
+
+		kobj = kobject_create_and_add(name, persisted_dir_kobj);
+		rc = sysfs_create_file(kobj, &persisted_attr.attr);
+		if (rc)
+			pr_warn("Unable to create sysfs file for iommufd node %s\n", name);
+	}
+	return 0;
+}
+
 int __init iommufd_deserialise_kho(void)
 {
-	pr_info("would deserialise here\n");
+	const void *fdt = kho_get_fdt();
+	int off;
+
+	if (!fdt)
+		return 0;
+
+	/* Parent directory for persisted iommufd files. */
+	persisted_dir_kobj = kobject_create_and_add("iommufd_persisted", kernel_kobj);
+
+	off = fdt_path_offset(fdt, "/iommufd");
+	if (off <= 0)
+		return 0; /* No data in KHO */
+
+	deserialise_iommufds(fdt, fdt_subnode_offset(fdt, off, "iommufds"));
 	return 0;
 }
