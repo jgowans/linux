@@ -59,6 +59,10 @@ struct io_pagetable {
 	unsigned long iova_alignment;
 };
 
+extern const struct file_operations iommufd_fops;
+int iommufd_fops_open(struct inode *inode, struct file *filp);
+struct iopt_area *iopt_area_alloc(void);
+
 void iopt_init_table(struct io_pagetable *iopt);
 void iopt_destroy_table(struct io_pagetable *iopt);
 int iopt_get_pages(struct io_pagetable *iopt, unsigned long iova,

@@ -233,7 +233,7 @@ static int iommufd_destroy(struct iommufd_ucmd *ucmd)
 	return iommufd_object_remove(ucmd->ictx, NULL, cmd->id, 0);
 }
 
-static int iommufd_fops_open(struct inode *inode, struct file *filp)
+int iommufd_fops_open(struct inode *inode, struct file *filp)
 {
 	struct iommufd_ctx *ictx;
 
@@ -473,7 +473,7 @@ static long iommufd_fops_ioctl(struct file *filp, unsigned int cmd,
 	return ret;
 }
 
-static const struct file_operations iommufd_fops = {
+const struct file_operations iommufd_fops = {
 	.owner = THIS_MODULE,
 	.open = iommufd_fops_open,
 	.release = iommufd_fops_release,

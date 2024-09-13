@@ -222,7 +222,7 @@ static int iopt_insert_area(struct io_pagetable *iopt, struct iopt_area *area,
 	return 0;
 }
 
-static struct iopt_area *iopt_area_alloc(void)
+struct iopt_area *iopt_area_alloc(void)
 {
 	struct iopt_area *area;
 

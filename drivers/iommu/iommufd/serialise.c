@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
+#include <linux/anon_inodes.h>
+#include <linux/fdtable.h>
 #include <linux/kexec.h>
 #include <linux/libfdt.h>
 #include "iommufd_private.h"
@@ -97,10 +99,60 @@ int iommufd_serialise_kho(struct notifier_block *self, unsigned long cmd,
 	}
 }
 
+static int rehydrate_iommufd(char *iommufd_name)
+{
+	struct file *file;
+	int fd;
+	int off;
+	struct iommufd_ctx *ictx;
+	struct files_struct *files = current->files;  // Current process's files_struct
+	const void *fdt = kho_get_fdt();
+	char kho_path[42];
+
+	fd = anon_inode_getfd("iommufd", &iommufd_fops, NULL, O_RDWR);
+	if (fd < 0)
+		return fd;
+	file = files_lookup_fd_raw(files, fd);
+	iommufd_fops_open(NULL, file);
+	ictx = file->private_data;
+
+	snprintf(kho_path, sizeof(kho_path), "/iommufd/iommufds/%s/ioases", iommufd_name);
+	fdt_for_each_subnode(off, fdt, fdt_path_offset(fdt, kho_path)) {
+	    struct iommufd_ioas *ioas;
+	    int range_off;
+
+	    ioas = iommufd_ioas_alloc(ictx);
+	    iommufd_object_finalize(ictx, &ioas->obj);
+
+	    fdt_for_each_subnode(range_off, fdt, off) {
+		    const unsigned long *iova_start, *iova_len;
+		    const int *iommu_prot;
+		    int len;
+		    struct iopt_area *area = iopt_area_alloc();
+
+		    iova_start = fdt_getprop(fdt, range_off, "iova-start", &len);
+		    iova_len = fdt_getprop(fdt, range_off, "iova-len", &len);
+		    iommu_prot = fdt_getprop(fdt, range_off, "iommu-prot", &len);
+
+		    area->iommu_prot = *iommu_prot;
+		    area->node.start = *iova_start;
+		    area->node.last = *iova_start + *iova_len - 1;
+		    interval_tree_insert(&area->node, &ioas->iopt.area_itree);
+	    }
+	    /* TODO: restore link from ioas to hwpt. */
+	}
+
+	return fd;
+}
+
 static ssize_t iommufd_show(struct kobject *kobj, struct kobj_attribute *attr,
 	char *buf)
 {
-	return 0;
+	char fd_str[10];
+	ssize_t len;
+
+	len = snprintf(buf, sizeof(fd_str), "%i\n", rehydrate_iommufd("1"));
+	return len;
 }
 
 static struct kobj_attribute persisted_attr =
