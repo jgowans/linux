@@ -139,7 +139,14 @@ static int rehydrate_iommufd(char *iommufd_name)
 		    area->node.last = *iova_start + *iova_len - 1;
 		    interval_tree_insert(&area->node, &ioas->iopt.area_itree);
 	    }
-	    /* TODO: restore link from ioas to hwpt. */
+	    /*
+	     * Here we should do something to associate struct iommufd_device with the
+	     * ictx, then get the iommu_ops via dev_iommu_ops(), and call the new
+	     * .domain_restore callback to get the struct iommu_domain.
+	     * Something like:
+	     * hwpt->domain = ops->domain_restore(dev, persistent_id);
+	     * Hand wavy - the details allude me at the moment...
+	     */
 	}
 
 	return fd;

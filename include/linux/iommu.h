@@ -529,6 +529,8 @@ static inline int __iommu_copy_struct_from_user_array(
  * @domain_alloc_paging: Allocate an iommu_domain that can be used for
  *                       UNMANAGED, DMA, and DMA_FQ domain types.
  * @domain_alloc_sva: Allocate an iommu_domain for Shared Virtual Addressing.
+ * @domain_restore: After kexec, give the same persistent_id which was originally
+ *                  used to allocate the domain, and the domain will be restored.
  * @probe_device: Add device to iommu driver handling
  * @release_device: Remove device from iommu driver handling
  * @probe_finalize: Do final setup work after the device is added to an IOMMU
@@ -575,6 +577,9 @@ struct iommu_ops {
 	struct iommu_domain *(*domain_alloc_paging)(struct device *dev);
 	struct iommu_domain *(*domain_alloc_sva)(struct device *dev,
 						 struct mm_struct *mm);
+
+	struct iommu_domain *(*domain_restore)(struct device *dev,
+			unsigned long persistent_id);
 
 	struct iommu_device *(*probe_device)(struct device *dev);
 	void (*release_device)(struct device *dev);

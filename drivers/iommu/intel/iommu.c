@@ -4690,6 +4690,17 @@ static int intel_iommu_read_and_clear_dirty(struct iommu_domain *domain,
 	return 0;
 }
 
+static struct iommu_domain *intel_domain_restore(struct device *dev,
+		unsigned long persistent_id)
+{
+	struct iommu_domain *domain;
+
+	domain = xa_load(&persistent_domains, persistent_id);
+	if (!domain)
+		pr_warn("No such persisted domain id %lu\n", persistent_id);
+	return domain;
+}
+
 static const struct iommu_dirty_ops intel_dirty_ops = {
 	.set_dirty_tracking = intel_iommu_set_dirty_tracking,
 	.read_and_clear_dirty = intel_iommu_read_and_clear_dirty,
@@ -4703,6 +4714,7 @@ const struct iommu_ops intel_iommu_ops = {
 	.domain_alloc		= intel_iommu_domain_alloc,
 	.domain_alloc_user	= intel_iommu_domain_alloc_user,
 	.domain_alloc_sva	= intel_svm_domain_alloc,
+	.domain_restore 	= intel_domain_restore,
 	.probe_device		= intel_iommu_probe_device,
 	.release_device		= intel_iommu_release_device,
 	.get_resv_regions	= intel_iommu_get_resv_regions,
