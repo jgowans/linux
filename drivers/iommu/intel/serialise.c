@@ -2,9 +2,99 @@
 
 #include "iommu.h"
 
+/*
+ * Serialised format:
+ * /intel-iommu
+ *     compatible = str
+ *     domains = {
+ *         persistent-id = {
+ *             mem = [ ... ] // page table pages
+ *             agaw = i32
+ *             pgd = u64
+ *             devices = {
+ *                 id = {
+ *                     u8 bus;
+ *                     u8 devfn
+ *                 },
+ *                 ...
+ *             }
+ *         }
+ *      }
+ */
+
+/*
+ * Adds all present PFNs on the PTE page to the kho_mem pointer and advances
+ * the pointer.
+ * Stolen from dma_pte_list_pagetables() */
+static void save_pte_pages(struct dmar_domain *domain, int level,
+			   struct dma_pte *pte, struct kho_mem **kho_mem)
+{
+	struct page *pg;
+
+	pg = pfn_to_page(dma_pte_addr(pte) >> PAGE_SHIFT);
+	
+	if (level == 1)
+		return;
+
+	pte = page_address(pg);
+	do {
+		if (dma_pte_present(pte)) {
+			(*kho_mem)->addr = dma_pte_addr(pte);
+			(*kho_mem)->len = PAGE_SIZE;
+			(*kho_mem)++;
+			if (!dma_pte_superpage(pte))
+				save_pte_pages(domain, level - 1, pte, kho_mem);
+		}
+		pte++;
+	} while (!first_pte_in_page(pte));
+}
+		
 static int serialise_domain(void *fdt, struct iommu_domain *domain)
 {
-	return 0;
+	struct dmar_domain *dmar_domain = to_dmar_domain(domain);
+	/*
+	 * kho_mems_start points to the original allocated array; kho_mems
+	 * is incremented by the callee. Keep both to know how many were added.
+	 */
+	struct kho_mem *kho_mems, *kho_mems_start;
+	struct device_domain_info *info;
+	int err = 0;
+	char name[24];
+	int device_idx = 0;
+	phys_addr_t pgd;
+
+	/*
+	 * Assume just one page worth of kho_mem objects is enough.
+	 * Better would be to keep track of number of allocated pages in the domain.
+	 * */
+	kho_mems_start = kho_mems = kzalloc(PAGE_SIZE, GFP_KERNEL);
+
+	save_pte_pages(dmar_domain, agaw_to_level(dmar_domain->agaw),
+		       dmar_domain->pgd, &kho_mems);
+
+	snprintf(name, sizeof(name), "%lu", domain->persistent_id);
+	err |= fdt_begin_node(fdt, name);
+	err |= fdt_property(fdt, "mem", kho_mems_start,
+			sizeof(struct kho_mem) * (kho_mems - kho_mems_start));
+	err |= fdt_property(fdt, "persistent_id", &domain->persistent_id,
+			sizeof(domain->persistent_id));
+	pgd = virt_to_phys(dmar_domain->pgd);
+	err |= fdt_property(fdt, "pgd", &pgd, sizeof(pgd));
+	err |= fdt_property(fdt, "agaw", &dmar_domain->agaw,
+			sizeof(dmar_domain->agaw));
+
+	err |= fdt_begin_node(fdt, "devices");
+	list_for_each_entry(info, &dmar_domain->devices, link) {
+		snprintf(name, sizeof(name), "%i", device_idx++);
+		err |= fdt_begin_node(fdt, name);
+		err |= fdt_property(fdt, "bus", &info->bus, sizeof(info->bus));
+		err |= fdt_property(fdt, "devfn", &info->devfn, sizeof(info->devfn));
+		err |= fdt_end_node(fdt); /* device_idx */
+	}
+	err |= fdt_end_node(fdt); /* devices */
+	err |= fdt_end_node(fdt); /* domain->persistent_id */
+
+	return err;
 }
 
 int intel_iommu_serialise_kho(struct notifier_block *self, unsigned long cmd,

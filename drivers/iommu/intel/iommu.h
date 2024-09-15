@@ -38,6 +38,16 @@
 
 #define IOVA_PFN(addr)		((addr) >> PAGE_SHIFT)
 
+#define __DOMAIN_MAX_PFN(gaw)  ((((uint64_t)1) << ((gaw) - VTD_PAGE_SHIFT)) - 1)
+#define __DOMAIN_MAX_ADDR(gaw) ((((uint64_t)1) << (gaw)) - 1)
+
+/* We limit DOMAIN_MAX_PFN to fit in an unsigned long, and DOMAIN_MAX_ADDR
+   to match. That way, we can use 'unsigned long' for PFNs with impunity. */
+#define DOMAIN_MAX_PFN(gaw)	((unsigned long) min_t(uint64_t, \
+				__DOMAIN_MAX_PFN(gaw), (unsigned long)-1))
+#define DOMAIN_MAX_ADDR(gaw)	(((uint64_t)__DOMAIN_MAX_PFN(gaw)) << VTD_PAGE_SHIFT)
+
+
 #define VTD_STRIDE_SHIFT        (9)
 #define VTD_STRIDE_MASK         (((u64)-1) << VTD_STRIDE_SHIFT)
 
