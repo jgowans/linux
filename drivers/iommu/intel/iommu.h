@@ -11,6 +11,7 @@
 #define _INTEL_IOMMU_H_
 
 #include <linux/types.h>
+#include <linux/kexec.h>
 #include <linux/iova.h>
 #include <linux/io.h>
 #include <linux/idr.h>
@@ -496,6 +497,7 @@ struct q_inval {
 #define PRQ_DEPTH	((0x1000 << PRQ_ORDER) >> 5)
 
 struct dmar_pci_notify_info;
+extern struct xarray persistent_domains;
 
 #ifdef CONFIG_IRQ_REMAP
 /* 1MB - maximum possible interrupt remapping table size */
@@ -1224,6 +1226,22 @@ static inline int iommu_calculate_max_sagaw(struct intel_iommu *iommu)
 #define intel_iommu_enabled (0)
 #define intel_iommu_sm (0)
 #endif
+
+#ifdef CONFIG_KEXEC_KHO
+int intel_iommu_serialise_kho(struct notifier_block *self, unsigned long cmd,
+			  void *fdt);
+int __init intel_iommu_deserialise_kho(void);
+#else
+int intel_iommu_serialise_kho(struct notifier_block *self, unsigned long cmd,
+			  void *fdt)
+{
+	return 0;
+}
+int __init intel_iommu_deserialise_kho(void)
+{
+	return 0;
+}
+#endif /* CONFIG_KEXEC_KHO */
 
 static inline const char *decode_prq_descriptor(char *str, size_t size,
 		u64 dw0, u64 dw1, u64 dw2, u64 dw3)

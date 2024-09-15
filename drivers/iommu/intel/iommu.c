@@ -65,6 +65,7 @@ static int rwbf_quirk;
 static int force_on = 0;
 static int intel_iommu_tboot_noforce;
 static int no_platform_optin;
+DEFINE_XARRAY(persistent_domains);
 
 #define ROOT_ENTRY_NR (VTD_PAGE_SIZE/sizeof(struct root_entry))
 
@@ -3393,6 +3394,10 @@ static __init int tboot_force_iommu(void)
 	return 1;
 }
 
+static struct notifier_block serialise_kho_nb = {
+	.notifier_call = intel_iommu_serialise_kho,
+};
+
 int __init intel_iommu_init(void)
 {
 	int ret = -ENODEV;
@@ -3431,6 +3436,12 @@ int __init intel_iommu_init(void)
 
 	if (!no_iommu)
 		intel_iommu_debugfs_init();
+
+	if (IS_ENABLED(CONFIG_KEXEC_KHO)) {
+		ret = register_kho_notifier(&serialise_kho_nb);
+		if (ret)
+			goto out_free_dmar;
+	}
 
 	if (no_iommu || dmar_disabled) {
 		/*
@@ -3738,6 +3749,7 @@ intel_iommu_domain_alloc_user(struct device *dev, u32 flags,
 	struct intel_iommu *iommu = info->iommu;
 	struct dmar_domain *dmar_domain;
 	struct iommu_domain *domain;
+	int rc;
 
 	/* Must be NESTING domain */
 	if (parent) {
@@ -3776,6 +3788,12 @@ intel_iommu_domain_alloc_user(struct device *dev, u32 flags,
 			return ERR_PTR(-EOPNOTSUPP);
 		}
 		domain->dirty_ops = &intel_dirty_ops;
+	}
+
+	if (persistent_id) {
+		rc = xa_insert(&persistent_domains, persistent_id, domain, GFP_KERNEL_ACCOUNT);
+		if (rc)
+			pr_warn("Unable to track persistent domain %lu\n", persistent_id);
 	}
 
 	return domain;
