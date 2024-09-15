@@ -124,7 +124,51 @@ int intel_iommu_serialise_kho(struct notifier_block *self, unsigned long cmd,
 	}
 }
 
+static void deserialise_domains(const void *fdt, int root_off)
+{
+	int off;
+	struct dmar_domain *dmar_domain;
+
+	fdt_for_each_subnode(off, fdt, root_off) {
+		const struct kho_mem *kho_mems;
+		int len, idx;
+		const unsigned long *pgd_phys;
+		const int *agaw;
+		const unsigned long *persistent_id;
+		int rc;
+
+		dmar_domain = alloc_domain(IOMMU_DOMAIN_UNMANAGED);
+
+		kho_mems = fdt_getprop(fdt, off, "mem", &len);
+		for (idx = 0; idx * sizeof(struct kho_mem) < len; ++idx)
+			kho_claim_mem(&kho_mems[idx]);
+
+		pgd_phys = fdt_getprop(fdt, off, "pgd", &len);
+		dmar_domain->pgd = phys_to_virt(*pgd_phys);
+		agaw = fdt_getprop(fdt, off, "agaw", &len);
+		dmar_domain->agaw = *agaw;
+		persistent_id = fdt_getprop(fdt, off, "persistent_id", &len);
+		dmar_domain->domain.persistent_id = *persistent_id;
+
+		rc = xa_insert(&persistent_domains, *persistent_id,
+				&dmar_domain->domain, GFP_KERNEL);
+		if (rc)
+			pr_warn("Unable to re-insert persistent domain %lu\n", *persistent_id);
+	}
+}
+
 int __init intel_iommu_deserialise_kho(void)
 {
+	const void *fdt = kho_get_fdt();
+	int off;
+
+	if (!fdt)
+		return 0;
+
+	off = fdt_path_offset(fdt, "/intel-iommu");
+	if (off <= 0)
+		return 0; /* No data in KHO */
+
+	deserialise_domains(fdt, fdt_subnode_offset(fdt, off, "domains"));
 	return 0;
 }

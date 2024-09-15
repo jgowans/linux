@@ -1505,7 +1505,7 @@ static bool first_level_by_default(unsigned int type)
 	return type != IOMMU_DOMAIN_UNMANAGED;
 }
 
-static struct dmar_domain *alloc_domain(unsigned int type)
+struct dmar_domain *alloc_domain(unsigned int type)
 {
 	struct dmar_domain *domain;
 
@@ -3468,6 +3468,7 @@ int __init intel_iommu_init(void)
 
 	init_no_remapping_devices();
 
+	intel_iommu_deserialise_kho();
 	ret = init_dmars();
 	if (ret) {
 		if (force_on)
@@ -4127,6 +4128,12 @@ static struct iommu_device *intel_iommu_probe_device(struct device *dev)
 	}
 
 	dev_iommu_priv_set(dev, info);
+
+	/*
+	 * TODO: around here the device should be added to the persistent
+	 * domain if it is a persistent device.
+	 */
+
 	if (pdev && pci_ats_supported(pdev)) {
 		ret = device_rbtree_insert(iommu, info);
 		if (ret)
