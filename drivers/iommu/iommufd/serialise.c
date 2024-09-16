@@ -16,6 +16,7 @@
  *       account_mode = u8
  *       ioases = [
  *         {
+ *           pinned_file_handle = u64
  *           areas = [
  *           ]
  *         }
@@ -47,6 +48,9 @@ static int serialise_iommufd(void *fdt, struct iommufd_ctx *ictx)
 		ioas = (struct iommufd_ioas *) obj;
 		snprintf(name, sizeof(name), "%lu", obj_idx);
 		err |= fdt_begin_node(fdt, name);
+
+		err |= fdt_property(fdt, "pinned-file-handle",
+				&ioas->pinned_file_handle, sizeof(ioas->pinned_file_handle));
 
 		for (area = iopt_area_iter_first(&ioas->iopt, 0, ULONG_MAX); area;
 				area = iopt_area_iter_next(area, 0, ULONG_MAX)) {
@@ -119,15 +123,18 @@ static int rehydrate_iommufd(char *iommufd_name)
 	snprintf(kho_path, sizeof(kho_path), "/iommufd/iommufds/%s/ioases", iommufd_name);
 	fdt_for_each_subnode(off, fdt, fdt_path_offset(fdt, kho_path)) {
 	    struct iommufd_ioas *ioas;
+	    int len;
 	    int range_off;
+	    const unsigned long *pinned_file_handle;
 
 	    ioas = iommufd_ioas_alloc(ictx);
+	    pinned_file_handle = fdt_getprop(fdt, off, "pinned-file-handle", &len);
+	    ioas->pinned_file_handle = *pinned_file_handle;
 	    iommufd_object_finalize(ictx, &ioas->obj);
 
 	    fdt_for_each_subnode(range_off, fdt, off) {
 		    const unsigned long *iova_start, *iova_len;
 		    const int *iommu_prot;
-		    int len;
 		    struct iopt_area *area = iopt_area_alloc();
 
 		    iova_start = fdt_getprop(fdt, range_off, "iova-start", &len);

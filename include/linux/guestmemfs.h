@@ -20,4 +20,12 @@ inline bool is_guestmemfs_file(struct file const *filp)
 }
 #endif
 
+/*
+ * Ensure that the file cannot be deleted or have its memory changed
+ * until it is unpinned. The returned value is a handle which can be
+ * used to un-pin the file.
+ */
+unsigned long guestmemfs_pin_file(struct file *file);
+void guestmemfs_unpin_file(unsigned long pin_handle);
+
 #endif

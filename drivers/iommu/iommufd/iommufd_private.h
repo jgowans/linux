@@ -260,12 +260,17 @@ struct iommufd_object *_iommufd_object_alloc(struct iommufd_ctx *ictx,
  * An iommu_domain & iommfd_hw_pagetable will be automatically selected
  * for a device based on the hwpt_list. If no suitable iommu_domain
  * is found a new iommu_domain will be created.
+ *
+ * If this IOAS is pinning a file for persistent DMA, pinned_file_handle will
+ * be set to a non-zero value. When unmapping this IOAS the file will be
+ * unpinned.
  */
 struct iommufd_ioas {
 	struct iommufd_object obj;
 	struct io_pagetable iopt;
 	struct mutex mutex;
 	struct list_head hwpt_list;
+	unsigned long pinned_file_handle;
 };
 
 static inline struct iommufd_ioas *iommufd_get_ioas(struct iommufd_ctx *ictx,

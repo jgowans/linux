@@ -42,6 +42,7 @@ struct guestmemfs_inode {
 	char filename[GUESTMEMFS_FILENAME_LEN];
 	void *mappings;
 	int num_mappings;
+	atomic_t long_term_pins;
 };
 
 void guestmemfs_initialise_inode_store(struct super_block *sb);

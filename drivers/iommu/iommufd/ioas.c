@@ -233,6 +233,7 @@ int iommufd_ioas_map(struct iommufd_ucmd *ucmd)
 			mmap_read_unlock(mm);
 			return -EFAULT;
 		}
+		ioas->pinned_file_handle = guestmemfs_pin_file(vma->vm_file);
 		mmap_read_unlock(mm);
 #else
 		return -EFAULT;
@@ -331,6 +332,9 @@ int iommufd_ioas_unmap(struct iommufd_ucmd *ucmd)
 				     &unmapped);
 		if (rc)
 			goto out_put;
+
+		if (ioas->pinned_file_handle)
+			guestmemfs_unpin_file(ioas->pinned_file_handle);
 	}
 
 	cmd->length = unmapped;

@@ -109,3 +109,23 @@ bool is_guestmemfs_file(struct file const *file)
 {
 	return file && file->f_op == &guestmemfs_file_fops;
 }
+
+unsigned long guestmemfs_pin_file(struct file *file)
+{
+	struct guestmemfs_inode *inode =
+		guestmemfs_get_persisted_inode(file->f_inode->i_sb,
+				file->f_inode->i_ino);
+
+	atomic_inc(&inode->long_term_pins);
+	return file->f_inode->i_ino;
+}
+
+void guestmemfs_unpin_file(unsigned long pin_handle)
+{
+	struct guestmemfs_inode *inode =
+		guestmemfs_get_persisted_inode(guestmemfs_sb, pin_handle);
+	int new;
+
+	new = atomic_dec_return(&inode->long_term_pins);
+	WARN_ON(new < 0);
+}

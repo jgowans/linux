@@ -151,6 +151,10 @@ static int guestmemfs_unlink(struct inode *dir, struct dentry *dentry)
 
 	ino = guestmemfs_get_persisted_inode(dir->i_sb, dir->i_ino)->child_ino;
 
+	inode = guestmemfs_get_persisted_inode(dir->i_sb, dentry->d_inode->i_ino);
+	if (atomic_read(&inode->long_term_pins))
+		return -EBUSY;
+
 	/* Special case for first file in dir */
 	if (ino == dentry->d_inode->i_ino) {
 		guestmemfs_get_persisted_inode(dir->i_sb, dir->i_ino)->child_ino =
