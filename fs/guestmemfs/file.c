@@ -104,3 +104,8 @@ const struct file_operations guestmemfs_file_fops = {
 	.owner = THIS_MODULE,
 	.mmap = mmap,
 };
+
+bool is_guestmemfs_file(struct file const *file)
+{
+	return file && file->f_op == &guestmemfs_file_fops;
+}

@@ -2,9 +2,11 @@
 /*
  * Copyright (c) 2021-2022, NVIDIA CORPORATION & AFFILIATES
  */
+#include <linux/guestmemfs.h>
 #include <linux/interval_tree.h>
 #include <linux/iommufd.h>
 #include <linux/iommu.h>
+#include <linux/mm_types.h>
 #include <uapi/linux/iommufd.h>
 
 #include "io_pagetable.h"
@@ -216,6 +218,26 @@ int iommufd_ioas_map(struct iommufd_ucmd *ucmd)
 	ioas = iommufd_get_ioas(ucmd->ictx, cmd->ioas_id);
 	if (IS_ERR(ioas))
 		return PTR_ERR(ioas);
+
+	pr_info("iommufd_ioas_map persistent id %lu\n",
+			ucmd->ictx->persistent_id);
+	if (ucmd->ictx->persistent_id) {
+#ifdef CONFIG_GUESTMEMFS_FS
+		struct vm_area_struct *vma;
+		struct mm_struct *mm = current->mm;
+
+		mmap_read_lock(mm);
+		vma = find_vma_intersection(current->mm,
+				 cmd->user_va, cmd->user_va + cmd->length);
+		if (!vma || !is_guestmemfs_file(vma->vm_file)) {
+			mmap_read_unlock(mm);
+			return -EFAULT;
+		}
+		mmap_read_unlock(mm);
+#else
+		return -EFAULT;
+#endif /* CONFIG_GUESTMEMFS_FS */
+	}
 
 	if (!(cmd->flags & IOMMU_IOAS_MAP_FIXED_IOVA))
 		flags = IOPT_ALLOC_IOVA;
